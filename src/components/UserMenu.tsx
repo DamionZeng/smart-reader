@@ -67,7 +67,7 @@ export function UserMenu({ className }: UserMenuProps) {
     return (
       <div
         className={cn(
-          "w-8 h-8 border border-[#1C1C1C]/10 bg-[#1C1C1C]/5 animate-pulse",
+          "w-9 h-9 border border-[#1C1C1C]/10 bg-[#1C1C1C]/5 animate-pulse",
           className
         )}
         aria-hidden
@@ -102,6 +102,7 @@ export function UserMenu({ className }: UserMenuProps) {
 
   return (
     <div ref={ref} className={cn("relative", className)}>
+      {/* 头像触发器 */}
       <button
         ref={triggerRef}
         type="button"
@@ -115,42 +116,81 @@ export function UserMenu({ className }: UserMenuProps) {
             setTimeout(() => focusMenuItem(0), 0);
           }
         }}
-        className="w-8 h-8 border border-[#1C1C1C]/20 hover:border-[#1C1C1C] transition-colors overflow-hidden flex items-center justify-center bg-[#1C1C1C]/5 focus:outline-none"
+        className={cn(
+          "group relative w-9 h-9 overflow-hidden flex items-center justify-center transition-all duration-300 focus:outline-none",
+          "bg-[#1C1C1C]/5 hover:bg-[#1C1C1C]/10",
+          open
+            ? "ring-1 ring-[#1C1C1C]/30 ring-offset-2 ring-offset-[#F9F8F6]"
+            : "hover:ring-1 hover:ring-[#1C1C1C]/20",
+        )}
       >
+        {/* 装饰性旋转边框 — hover 时激活 */}
+        <span
+          className={cn(
+            "pointer-events-none absolute inset-0 border border-[#1C1C1C]/0 transition-all duration-500",
+            "group-hover:border-[#1C1C1C]/20 group-hover:rotate-45",
+            open && "border-[#1C1C1C]/20 rotate-45",
+          )}
+        />
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={image}
             alt={name}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
             referrerPolicy="no-referrer"
           />
         ) : (
-          <span className="font-serif text-sm text-[#1C1C1C] leading-none">
+          <span className="font-serif text-base text-[#1C1C1C] leading-none transition-transform duration-300 group-hover:scale-110">
             {initial}
           </span>
         )}
       </button>
 
+      {/* 下拉菜单 */}
       {open && (
         <div
           role="menu"
           onKeyDown={handleMenuKeyDown}
-          className="absolute right-0 top-full mt-3 w-56 bg-[#F9F8F6] border border-[#1C1C1C]/10 z-50 animate-in fade-in duration-150"
+          className="absolute right-0 top-full mt-3 w-60 bg-[#F9F8F6] border border-[#1C1C1C]/10 z-50 shadow-none"
+          style={{
+            animation: "menuReveal 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+            transformOrigin: "top right",
+          }}
         >
-          <div className="px-4 py-3 border-b border-[#1C1C1C]/10">
-            <div className="font-sans text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 mb-1">
-              {t("user.signedInAs")}
-            </div>
-            <div className="font-serif text-sm text-[#1C1C1C] truncate">
-              {name}
-            </div>
-            {session.user.email && name !== session.user.email && (
-              <div className="font-sans text-xs text-[#1C1C1C]/60 truncate mt-0.5">
-                {session.user.email}
+          {/* 用户信息头 */}
+          <div className="px-4 py-4 border-b border-[#1C1C1C]/10">
+            <div className="flex items-center gap-3">
+              {/* 小头像 */}
+              <div className="w-8 h-8 bg-[#1C1C1C]/5 border border-[#1C1C1C]/10 flex items-center justify-center overflow-hidden shrink-0">
+                {image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={image}
+                    alt={name}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="font-serif text-sm text-[#1C1C1C] leading-none">
+                    {initial}
+                  </span>
+                )}
               </div>
-            )}
+              <div className="min-w-0">
+                <div className="font-serif text-sm text-[#1C1C1C] truncate">
+                  {name}
+                </div>
+                {session.user.email && name !== session.user.email && (
+                  <div className="font-sans text-xs text-[#1C1C1C]/50 truncate mt-0.5">
+                    {session.user.email}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* 菜单项 */}
           <Link
             ref={(el) => {
               menuItemsRef.current[0] = el;
@@ -159,9 +199,9 @@ export function UserMenu({ className }: UserMenuProps) {
             onClick={() => setOpen(false)}
             role="menuitem"
             tabIndex={-1}
-            className="flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors focus:outline-none focus:bg-[#1C1C1C]/5"
+            className="group flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors focus:outline-none focus:bg-[#1C1C1C]/5"
           >
-            <UserIcon className="w-4 h-4 text-[#1C1C1C]/60" />
+            <UserIcon className="w-4 h-4 text-[#1C1C1C]/40 group-hover:text-[#1C1C1C] transition-colors" />
             {t("user.dashboard")}
           </Link>
           <Link
@@ -172,9 +212,9 @@ export function UserMenu({ className }: UserMenuProps) {
             onClick={() => setOpen(false)}
             role="menuitem"
             tabIndex={-1}
-            className="flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors focus:outline-none focus:bg-[#1C1C1C]/5"
+            className="group flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors focus:outline-none focus:bg-[#1C1C1C]/5"
           >
-            <Settings className="w-4 h-4 text-[#1C1C1C]/60" />
+            <Settings className="w-4 h-4 text-[#1C1C1C]/40 group-hover:text-[#1C1C1C] transition-colors" />
             {t("user.settings")}
           </Link>
           <button
@@ -185,9 +225,9 @@ export function UserMenu({ className }: UserMenuProps) {
             onClick={handleSignOut}
             role="menuitem"
             tabIndex={-1}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors border-t border-[#1C1C1C]/10 focus:outline-none focus:bg-[#1C1C1C]/5"
+            className="group w-full flex items-center gap-3 px-4 py-3 text-sm font-sans text-[#1C1C1C] hover:bg-[#1C1C1C]/5 transition-colors border-t border-[#1C1C1C]/10 focus:outline-none focus:bg-[#1C1C1C]/5"
           >
-            <LogOut className="w-4 h-4 text-[#1C1C1C]/60" />
+            <LogOut className="w-4 h-4 text-[#1C1C1C]/40 group-hover:text-[#1C1C1C] transition-colors" />
             {t("user.signOut")}
           </button>
         </div>

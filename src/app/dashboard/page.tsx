@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Plus, ArrowRight, FileText, Globe, BookOpen, Code2, X, Trash2, GitCompare, Check, FileStack, Download, Copy, FolderPlus, Tag as TagIcon, Image as ImageIcon } from "lucide-react";
 import Markdown from "markdown-to-jsx";
-import { UserMenu } from "@/components/UserMenu";
+import { SiteHeader } from "@/components/SiteHeader";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { listProjects, deleteProject, ProjectSummary } from "@/api/project";
 import { useSession } from "@/lib/auth-client";
@@ -78,6 +78,10 @@ export default function DashboardPage() {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // Incremented after mutations that change the global graph (e.g.
+  // project deletion) so <GlobalKnowledgeGraph> re-fetches without a
+  // full-page reload.
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isComparing, setIsComparing] = useState(false);
@@ -154,6 +158,11 @@ export default function DashboardPage() {
         prev ? prev.filter((p) => p.id !== deleteTarget.id) : prev
       );
       setDeleteTarget(null);
+      // Trigger a re-fetch of the global knowledge graph so the
+      // deleted project's concepts disappear from the merged view.
+      // Only the graph panel re-renders — the rest of the page
+      // (project list, filters, etc.) is untouched.
+      setGraphRefreshKey((k) => k + 1);
     } catch (err: any) {
       setError(err.message || "Failed to delete project");
     } finally {
@@ -333,19 +342,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#F9F8F6] text-[#1C1C1C] font-sans">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-[#F9F8F6]/90 backdrop-blur z-50 border-b border-[#1C1C1C]/10 px-6 py-5">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Link
-            href="/"
-            className="font-serif text-2xl tracking-tight font-bold"
-          >
-            SmartReader.
-          </Link>
-          <div className="flex items-center gap-6">
-            <UserMenu />
-          </div>
-        </div>
-      </nav>
+      <SiteHeader />
 
       <main className="pt-32 pb-24 px-6">
         <div className="max-w-7xl mx-auto">
@@ -396,8 +393,10 @@ export default function DashboardPage() {
 
           {/* P2-3: Global Knowledge Graph — aggregates all projects'
               concept graphs into one Obsidian-style view. Clicking a
-              node navigates to that concept's source article. */}
-          <GlobalKnowledgeGraph />
+              node navigates to that concept's source article.
+              `refreshKey` bumps after a project is deleted so the
+              merged view drops that project's concepts. */}
+          <GlobalKnowledgeGraph refreshKey={graphRefreshKey} />
 
           {/* Content */}
           {projects === null ? (

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import "@/i18n";
-import { UserMenu } from "@/components/UserMenu";
+import { SiteHeader } from "@/components/SiteHeader";
 import { useSession } from "@/lib/auth-client";
 import { Check } from "lucide-react";
 import {
@@ -152,16 +152,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-[#F9F8F6] text-[#1C1C1C] font-sans selection:bg-[#1C1C1C] selection:text-[#F9F8F6]">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-[#F9F8F6]/90 backdrop-blur z-50 border-b border-[#1C1C1C]/10 px-6 py-5">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Link href="/" className="font-serif text-2xl tracking-tight font-bold">
-            SmartReader.
-          </Link>
-          <div className="flex items-center gap-6">
-            <UserMenu />
-          </div>
-        </div>
-      </nav>
+      <SiteHeader />
 
       <main className="pt-32 pb-24 px-6">
         <div className="max-w-2xl mx-auto">

@@ -19,10 +19,10 @@ import "@/i18n";
 
 import { ConceptGraphNode } from "@/components/Nodes/ConceptGraphNode";
 import { ClusterGroupNode } from "@/components/Nodes/ClusterGroupNode";
-import { ClusterLegend } from "@/components/board/ClusterLegend";
+import { ShortestStraightEdge } from "@/components/Edges/ShortestStraightEdge";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { conceptGraphToParsedDocument, extractClusterLegend } from "@/utils/concept-graph-bridge";
-import { clusterForceDirectedLayout } from "@/utils/auto-layout";
+import { clusterForceDirectedLayout, filterIsolatedNodes, markMainNode } from "@/utils/auto-layout";
 import { buildEdge } from "@/utils/edge-style";
 import type { ConceptGraph } from "@/types/concept-graph";
 import type { DocumentEdge } from "@/types";
@@ -31,6 +31,13 @@ import { Network, ArrowRight } from "lucide-react";
 const nodeTypes = {
   "concept-graph": ConceptGraphNode,
   "cluster-group": ClusterGroupNode,
+};
+
+const edgeTypes = {
+  // Custom edge: straight line with endpoints on the source/target
+  // circle perimeters (instead of a shared handle). See
+  // ShortestStraightEdge.tsx for the full rationale.
+  shortest: ShortestStraightEdge,
 };
 
 /**
@@ -50,7 +57,7 @@ const nodeTypes = {
  * This is a read-only view: no editing, no auto-save, no force-param
  * tuning. Those live on the board page.
  */
-function GlobalKnowledgeGraphInner() {
+function GlobalKnowledgeGraphInner({ refreshKey }: { refreshKey: number }) {
   const { t } = useTranslation();
   const router = useRouter();
 
@@ -70,10 +77,15 @@ function GlobalKnowledgeGraphInner() {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
-  // ----- Fetch the global graph on mount -----
+  // ----- Fetch the global graph on mount and when refreshKey changes -----
+  // `refreshKey` lets the parent (dashboard) trigger a re-fetch after
+  // mutations that change the underlying data (e.g. deleting a project)
+  // without forcing a full-page reload. The whole panel re-renders
+  // from a single network round-trip.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetch("/api/concept-graph/global")
       .then(async (res) => {
         if (!res.ok) {
@@ -115,7 +127,7 @@ function GlobalKnowledgeGraphInner() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshKey]);
 
   // ----- Layout: run force-directed layout when graph arrives -----
   useEffect(() => {
@@ -144,14 +156,17 @@ function GlobalKnowledgeGraphInner() {
     }));
     const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e as DocumentEdge));
 
-    // Run the two-stage cluster force-directed layout. Canvas size
-    // 1700x1200 per project memory (compact, user-friendly, fitView
-    // zooms in enough to scan the whole layout in one view).
-    const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(
-      flowNodes,
-      flowEdges,
-      { width: 1700, height: 1200 }
-    );
+    // Drop isolated nodes (degree 0), then mark the single highest-
+    // degree node as the "main" hub so the renderer can apply a
+    // distinct accent color. Then run the two-stage cluster layout:
+    // each document becomes a big background circle containing its
+    // concepts, matching the Obsidian "one circle per note" look.
+    const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
+    const markedNodes = markMainNode(connectedNodes);
+    const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(markedNodes, connectedEdges, {
+      width: 1700,
+      height: 1200,
+    });
 
     // P2-2: inject staggered entrance delay by importance rank so
     // high-importance nodes appear first (timeline animation).
@@ -172,20 +187,20 @@ function GlobalKnowledgeGraphInner() {
       },
     }));
 
+    // Cluster-group nodes (document big circles) render below concept
+    // nodes. Their zIndex is set inside clusterForceDirectedLayout.
     setNodes([...clusterGroups, ...withDelay]);
-    setEdges(flowEdges);
+    setEdges(connectedEdges);
     setClusterLegend(extractClusterLegend(parsed));
 
-    // Build clusterCenters from the cluster-group nodes so the legend
-    // can pan/zoom to a cluster on click. The cluster-group node is at
-    // position {x: cx-r, y: cy-r} with size 2r, so its center is
-    // position.x + r, position.y + r.
+    // Derive cluster centers from the cluster-group node positions
+    // so the legend's "pan to cluster" still works.
     const centers: Record<string, { x: number; y: number }> = {};
     for (const cg of clusterGroups) {
-      const r = (cg.data as Record<string, unknown>)?.radius as number ?? 120;
+      const radius = (cg.data as Record<string, unknown>)?.radius as number ?? 90;
       centers[cg.id] = {
-        x: cg.position.x + r,
-        y: cg.position.y + r,
+        x: cg.position.x + radius,
+        y: cg.position.y + radius,
       };
     }
     setClusterCenters(centers);
@@ -221,9 +236,9 @@ function GlobalKnowledgeGraphInner() {
       // Strip stale hover flags when no node is hovered.
       return filtered.map((n) => {
         const d = n.data as Record<string, unknown> | undefined;
-        if (d && (d.isHoverNeighbor || d.isFaded)) {
-          const { isHoverNeighbor: _h, isFaded: _f, ...rest } = d;
-          return { ...n, data: { ...rest, isHoverNeighbor: false, isFaded: false } };
+        if (d && (d.isHoverNeighbor || d.isFaded || d.isHovered)) {
+          const { isHoverNeighbor: _h, isFaded: _f, isHovered: _hd, ...rest } = d;
+          return { ...n, data: { ...rest, isHoverNeighbor: false, isFaded: false, isHovered: false } };
         }
         return n;
       });
@@ -237,6 +252,7 @@ function GlobalKnowledgeGraphInner() {
             ...(n.data as Record<string, unknown>),
             isHoverNeighbor: false,
             isFaded: false,
+            isHovered: false,
           },
         };
       }
@@ -244,6 +260,7 @@ function GlobalKnowledgeGraphInner() {
         ...n,
         data: {
           ...(n.data as Record<string, unknown>),
+          isHovered: n.id === hoveredNodeId,
           isHoverNeighbor: hoverNeighborIds.has(n.id) && n.id !== hoveredNodeId,
           isFaded: !hoverNeighborIds.has(n.id),
         },
@@ -252,22 +269,54 @@ function GlobalKnowledgeGraphInner() {
   }, [nodes, hiddenClusterIds, hoverNeighborIds, hoveredNodeId]);
 
   const visibleEdges = useMemo(() => {
-    if (hiddenClusterIds.size === 0) return edges;
-    const hiddenNodeIds = new Set<string>();
-    for (const n of nodes) {
-      if (n.type === "cluster-group") {
-        if (hiddenClusterIds.has(n.id)) hiddenNodeIds.add(n.id);
-        continue;
+    // First, filter out edges connected to hidden cluster nodes.
+    let result = edges;
+    if (hiddenClusterIds.size > 0) {
+      const hiddenNodeIds = new Set<string>();
+      for (const n of nodes) {
+        if (n.type === "cluster-group") {
+          if (hiddenClusterIds.has(n.id)) hiddenNodeIds.add(n.id);
+          continue;
+        }
+        const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
+          | string
+          | undefined;
+        if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
       }
-      const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
-        | string
-        | undefined;
-      if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
+      result = edges.filter(
+        (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
+      );
     }
-    return edges.filter(
-      (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
-    );
-  }, [nodes, edges, hiddenClusterIds]);
+
+    // Then, highlight edges connected to the hovered node. We do NOT
+    // change the stroke color or boost opacity to 0.9 — that would
+    // make hovered edges look like a different "type" of edge.
+    // Instead we keep the original color/opacity and nudge the width
+    // up by a hair (1.2×, capped at 1.5px). The contrast comes mostly
+    // from dimming non-incident edges to 8% opacity, not from making
+    // highlighted edges very thick.
+    if (!hoveredNodeId) return result;
+    return result.map((e) => {
+      const isHighlighted = e.source === hoveredNodeId || e.target === hoveredNodeId;
+      if (isHighlighted) {
+        const baseW = e.style?.strokeWidth ?? 1;
+        return {
+          ...e,
+          style: {
+            ...e.style,
+            strokeWidth: Math.min(baseW * 1.2, 1.5),
+          },
+        };
+      }
+      return {
+        ...e,
+        style: {
+          ...e.style,
+          strokeOpacity: 0.08,
+        },
+      };
+    });
+  }, [nodes, edges, hiddenClusterIds, hoveredNodeId]);
 
   // ----- Handlers -----
   const handleNodeClick = useCallback(
@@ -381,6 +430,7 @@ function GlobalKnowledgeGraphInner() {
           nodes={visibleNodes}
           edges={visibleEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={handleNodeClick}
@@ -407,15 +457,6 @@ function GlobalKnowledgeGraphInner() {
             className="!bg-[#F9F8F6] !border-[#1C1C1C]/20 !shadow-none"
             showInteractive={false}
           />
-          {clusterLegend.length > 0 && (
-            <ClusterLegend
-              clusters={clusterLegend}
-              clusterCenters={clusterCenters}
-              hiddenClusterIds={hiddenClusterIds}
-              onToggle={handleToggleCluster}
-              onLocate={handleLocateCluster}
-            />
-          )}
         </ReactFlow>
       </div>
     </section>
@@ -426,11 +467,14 @@ function GlobalKnowledgeGraphInner() {
  * Exported wrapper that mounts the ReactFlowProvider so the inner
  * component (and ConceptGraphNode's `useViewport()` call) have access
  * to the flow context.
+ *
+ * `refreshKey`: increment this to trigger a re-fetch of the global
+ * graph without remounting the panel (e.g. after deleting a project).
  */
-export function GlobalKnowledgeGraph() {
+export function GlobalKnowledgeGraph({ refreshKey = 0 }: { refreshKey?: number }) {
   return (
     <ReactFlowProvider>
-      <GlobalKnowledgeGraphInner />
+      <GlobalKnowledgeGraphInner refreshKey={refreshKey} />
     </ReactFlowProvider>
   );
 }

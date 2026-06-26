@@ -32,7 +32,7 @@ import { normaliseGraph } from "@/utils/graph-normalize";
 import { exportAndDownload } from "@/utils/export-markdown";
 import type { ExportFormat } from "@/utils/export-markdown";
 import { exportGraphAsImage } from "@/utils/export-image";
-import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, type LayoutTemplate } from "@/utils/auto-layout";
+import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, simpleForceDirectedLayout, filterIsolatedNodes, markMainNode, type LayoutTemplate } from "@/utils/auto-layout";
 import { pickFirstString } from "@/utils/string";
 import { buildEdge } from "@/utils/edge-style";
 import {
@@ -45,6 +45,7 @@ import { CodeNode } from "@/components/Nodes/CodeNode";
 import { ConceptNode } from "@/components/Nodes/ConceptNode";
 import { ConceptGraphNode } from "@/components/Nodes/ConceptGraphNode";
 import { ClusterGroupNode } from "@/components/Nodes/ClusterGroupNode";
+import { ShortestStraightEdge } from "@/components/Edges/ShortestStraightEdge";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { SaveStatus } from "@/components/board/SaveIndicator";
 import { OriginalTextPanel } from "@/components/board/OriginalTextPanel";
@@ -52,7 +53,6 @@ import { QAPanel } from "@/components/board/QAPanel";
 import { AIErrorBoundary } from "@/components/errors/AIErrorBoundary";
 import { EdgeEditorModal } from "@/components/board/EdgeEditorModal";
 import { LayoutMenu } from "@/components/board/LayoutMenu";
-import { ClusterLegend } from "@/components/board/ClusterLegend";
 import { HistoryPanel } from "@/components/board/HistoryPanel";
 import { createVersion } from "@/api/versions";
 import { conceptGraphToParsedDocument } from "@/utils/concept-graph-bridge";
@@ -68,6 +68,13 @@ const nodeTypes = {
   concept: ConceptNode,
   "concept-graph": ConceptGraphNode,
   "cluster-group": ClusterGroupNode,
+};
+
+const edgeTypes = {
+  // Custom edge: straight line with endpoints on the source/target
+  // circle perimeters (instead of a shared handle). See
+  // ShortestStraightEdge.tsx for the full rationale.
+  shortest: ShortestStraightEdge,
 };
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -207,9 +214,9 @@ function CodeBoardPageInner() {
     if (!hoverNeighborIds) {
       return filtered.map((n) => {
         const d = n.data as Record<string, unknown> | undefined;
-        if (d && (d.isHoverNeighbor || d.isFaded)) {
-          const { isHoverNeighbor: _h, isFaded: _f, ...rest } = d;
-          return { ...n, data: rest };
+        if (d && (d.isHoverNeighbor || d.isFaded || d.isHovered)) {
+          const { isHoverNeighbor: _h, isFaded: _f, isHovered: _hd, ...rest } = d;
+          return { ...n, data: { ...rest, isHoverNeighbor: false, isFaded: false, isHovered: false } };
         }
         return n;
       });
@@ -218,6 +225,7 @@ function CodeBoardPageInner() {
       ...n,
       data: {
         ...(n.data as Record<string, unknown>),
+        isHovered: n.id === hoveredNodeId,
         isHoverNeighbor: hoverNeighborIds.has(n.id) && n.id !== hoveredNodeId,
         isFaded: !hoverNeighborIds.has(n.id),
       },
@@ -225,24 +233,52 @@ function CodeBoardPageInner() {
   }, [nodes, hiddenClusterIds, hoverNeighborIds, hoveredNodeId]);
 
   const visibleEdges = useMemo(() => {
-    if (hiddenClusterIds.size === 0) return edges;
-    const hiddenNodeIds = new Set<string>();
-    for (const n of nodes) {
-      if (n.type === "cluster-group") {
-        if (hiddenClusterIds.has(n.id)) {
-          hiddenNodeIds.add(n.id);
+    // First, filter out edges connected to hidden cluster nodes.
+    let result = edges;
+    if (hiddenClusterIds.size > 0) {
+      const hiddenNodeIds = new Set<string>();
+      for (const n of nodes) {
+        if (n.type === "cluster-group") {
+          if (hiddenClusterIds.has(n.id)) {
+            hiddenNodeIds.add(n.id);
+          }
+          continue;
         }
-        continue;
+        const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
+          | string
+          | undefined;
+        if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
       }
-      const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
-        | string
-        | undefined;
-      if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
+      result = edges.filter(
+        (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
+      );
     }
-    return edges.filter(
-      (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
-    );
-  }, [nodes, edges, hiddenClusterIds]);
+
+    // Highlight edges connected to the hovered node (Obsidian-style
+    // spotlight). Keep original color/opacity; nudge width by a hair
+    // (1.2×, capped at 1.5px). Non-incident edges dimmed to ~8%.
+    if (!hoveredNodeId) return result;
+    return result.map((e) => {
+      const isHighlighted = e.source === hoveredNodeId || e.target === hoveredNodeId;
+      if (isHighlighted) {
+        const baseW = e.style?.strokeWidth ?? 1;
+        return {
+          ...e,
+          style: {
+            ...e.style,
+            strokeWidth: Math.min(baseW * 1.2, 1.5),
+          },
+        };
+      }
+      return {
+        ...e,
+        style: {
+          ...e.style,
+          strokeOpacity: 0.08,
+        },
+      };
+    });
+  }, [nodes, edges, hiddenClusterIds, hoveredNodeId]);
 
   const handleToggleCluster = useCallback((clusterId: string) => {
     setHiddenClusterIds((prev) => {
@@ -473,12 +509,16 @@ function CodeBoardPageInner() {
             data: { ...n.data, isActive: false },
           }));
           const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(flowNodes, flowEdges);
+          // No cluster layer: filter isolated nodes, mark the main hub,
+          // and run a single-stage force layout (unified mesh).
+          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
+          const markedNodes = markMainNode(connectedNodes);
+          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges);
           initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = flowEdges;
-          setNodes([...clusterGroups, ...positionedNodes]);
-          setEdges(flowEdges);
-          syncClusterCenters(clusterGroups);
+          initialEdgesRef.current = connectedEdges;
+          setNodes(positionedNodes);
+          setEdges(connectedEdges);
+          syncClusterCenters([]);
           setHiddenClusterIds(new Set());
           setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
         } else {
@@ -826,12 +866,14 @@ function CodeBoardPageInner() {
             data: { ...n.data, isActive: false },
           }));
           const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(flowNodes, flowEdges);
-          setNodes([...clusterGroups, ...positionedNodes]);
-          setEdges(flowEdges);
+          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
+          const markedNodes = markMainNode(connectedNodes);
+          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges);
+          setNodes(positionedNodes);
+          setEdges(connectedEdges);
           initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = flowEdges;
-          syncClusterCenters(clusterGroups);
+          initialEdgesRef.current = connectedEdges;
+          syncClusterCenters([]);
           setHiddenClusterIds(new Set());
           setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
           // The KG is now the editable surface — do NOT skip auto-save.
@@ -909,12 +951,12 @@ function CodeBoardPageInner() {
     commit();
     const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
     if (template === "force") {
-      const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(
+      const positionedNodes = simpleForceDirectedLayout(
         conceptNodes,
         edgesRef.current,
-        { width: 2200, height: 1500 }
+        { width: 1700, height: 1200 }
       );
-      setNodes([...clusterGroups, ...positionedNodes]);
+      setNodes(positionedNodes);
       setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
     } else {
       const laidOut = applyLayoutTemplate(conceptNodes, edgesRef.current, template);
@@ -1198,6 +1240,7 @@ function CodeBoardPageInner() {
             onDoubleClick={handlePaneDoubleClick}
             onInit={setRfInstance}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             connectionMode={ConnectionMode.Loose}
             deleteKeyCode={null}
             fitView
@@ -1303,15 +1346,6 @@ function CodeBoardPageInner() {
                   {isGeneratingKG ? `KG ${kgProgress?.current || 0}/${kgProgress?.total || 7}` : "Knowledge Graph"}
                 </button>
               </div>
-            </Panel>
-            <Panel position="bottom-left" className="!mb-4">
-              <ClusterLegend
-                clusters={clusterLegend}
-                clusterCenters={clusterCenters}
-                hiddenClusterIds={hiddenClusterIds}
-                onToggle={handleToggleCluster}
-                onLocate={handleLocateCluster}
-              />
             </Panel>
             {kgError && (
               <Panel position="top-center" className="!mt-2">

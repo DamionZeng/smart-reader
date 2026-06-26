@@ -39,8 +39,13 @@ function ClusterGroupNodeComponent({ data, id }: NodeProps & { data?: ClusterGro
         // pointerEvents auto so clicks land on the circle (P2-1)
         pointerEvents: "auto",
         cursor: "pointer",
+        // Ensure the cluster circle is visible above the background
+        // but below concept nodes (which have zIndex 10). Using
+        // zIndex 1 here so the circle doesn't get hidden behind the
+        // React Flow pane or background SVG.
+        zIndex: 1,
       }}
-      className="relative flex items-center justify-center animate-in fade-in zoom-in-50 duration-500"
+      className="relative flex items-center justify-center"
       onClick={(e) => {
         e.stopPropagation();
         data?.onFocusCluster?.(id);
@@ -48,14 +53,15 @@ function ClusterGroupNodeComponent({ data, id }: NodeProps & { data?: ClusterGro
       role="button"
       aria-label={`Focus cluster ${label}`}
     >
-      {/* Circle background */}
+      {/* Circle background — uses a slightly higher opacity than
+          before so the cluster boundary is clearly visible against
+          the #F9F8F6 page background. The border is the primary
+          visual cue; the fill is a very subtle tint. */}
       <div
-        className={`absolute inset-0 rounded-full transition-all duration-500 ${
-          isFocused ? "scale-105" : "hover:scale-102"
-        }`}
+        className="absolute inset-0 rounded-full transition-all duration-500"
         style={{
-          backgroundColor: `${color}0D`,
-          border: `1.5px solid ${isFocused ? color : `${color}30`}`,
+          backgroundColor: `${color}14`,
+          border: `2px solid ${isFocused ? color : `${color}50`}`,
           boxShadow: isFocused ? `0 0 0 4px ${color}20` : "none",
         }}
       />
@@ -65,7 +71,7 @@ function ClusterGroupNodeComponent({ data, id }: NodeProps & { data?: ClusterGro
           expanded. */}
       <span
         className="relative z-10 font-serif text-lg leading-tight tracking-tight select-none transition-opacity duration-300"
-        style={{ color: isFocused ? `${color}80` : `${color}40` }}
+        style={{ color: isFocused ? `${color}` : `${color}60` }}
       >
         {label}
       </span>

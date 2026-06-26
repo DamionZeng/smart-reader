@@ -1,7 +1,10 @@
 {
   "nav": {
     "login": "Login / Enter",
-    "language": "EN"
+    "language": "EN",
+    "home": "Home",
+    "projects": "Projects",
+    "graph": "Graph"
   },
   "auth": {
     "welcomeBack": "Welcome back",

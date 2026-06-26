@@ -1,7 +1,10 @@
 {
   "nav": {
     "login": "登录 / 进入",
-    "language": "ZH"
+    "language": "ZH",
+    "home": "首页",
+    "projects": "项目",
+    "graph": "图谱"
   },
   "auth": {
     "welcomeBack": "欢迎回来",

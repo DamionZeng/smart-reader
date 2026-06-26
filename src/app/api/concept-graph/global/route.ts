@@ -41,7 +41,6 @@ import type {
  *    graph, just with document-level grouping instead of semantic
  *    clusters.
  */
-const MAX_CONCEPTS = 200;
 const MAX_DOCUMENTS = 30; // cap so a user with 100s of projects doesn't overload the canvas
 
 // Stable color palette for document-clusters. Cycled by document index
@@ -279,20 +278,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ----- Cap to top N concepts by importance + degree -----
-    const degreeMap = new Map<string, number>();
-    for (const e of mergedEdgesMap.values()) {
-      degreeMap.set(e.source, (degreeMap.get(e.source) ?? 0) + 1);
-      degreeMap.set(e.target, (degreeMap.get(e.target) ?? 0) + 1);
-    }
-
-    const allConcepts = Array.from(mergedConcepts.values()).map((c) => ({
-      ...c,
-      _score: (c.importance ?? 0) + Math.log(1 + (degreeMap.get(c.id) ?? 0)) / Math.log(1 + 20),
-    }));
-    allConcepts.sort((a, b) => b._score - a._score);
-
-    const keptConcepts = allConcepts.slice(0, MAX_CONCEPTS);
+    // ----- Build final concept list (no cap — match board's node count) -----
+    const keptConcepts = Array.from(mergedConcepts.values());
     const keptIds = new Set(keptConcepts.map((c) => c.id));
 
     // Drop edges that reference dropped concepts.
@@ -311,7 +298,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Strip temp fields + rebuild cluster conceptIds for kept set.
-    const finalConcepts: Concept[] = keptConcepts.map(({ _score, bestDocId, bestImportance, ...rest }) => rest);
+    const finalConcepts: Concept[] = keptConcepts.map(({ bestDocId, bestImportance, ...rest }) => rest);
     const finalClusters: ConceptCluster[] = [];
     for (const docCluster of docClusterMap.values()) {
       const ids = docCluster.conceptIds.filter((id) => keptIds.has(id));

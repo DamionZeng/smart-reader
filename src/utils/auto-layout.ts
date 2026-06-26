@@ -289,25 +289,191 @@ export function forceDirectedLayout(
  * as before.
  */
 export interface ForceParams {
-  /** Repulsion between nodes. More negative = more spread out. -180 default. */
+  /** Repulsion between nodes. More negative = more spread out. */
   charge: number;
-  /** Target distance for edges. Smaller = tighter clusters. 150 default. */
+  /** Target distance for edges. Smaller = tighter clusters. */
   linkDistance: number;
-  /** Node collision padding. 28 default. */
+  /** Node collision padding. */
   collide: number;
-  /** Strength of the global centering force. 0.05 default. */
+  /** Strength of the global centering force. */
   centerStrength: number;
-  /** Strength of the per-cluster pull. 0.2 default. Higher = tighter clusters. */
+  /** Strength of the per-cluster pull. Higher = tighter clusters. */
   clusterPull: number;
 }
 
 export const DEFAULT_FORCE_PARAMS: ForceParams = {
-  charge: -180,
-  linkDistance: 150,
-  collide: 28,
-  centerStrength: 0.05,
-  clusterPull: 0.2,
+  // Tuned for an Obsidian-like compactness: nodes are pulled close
+  // to their cluster centroid (clusterPull=0.7), links are short
+  // (linkDistance=50), and the global center is strong (0.2). The
+  // collision radius was reduced so dense clusters don't explode.
+  // Earlier values (0.5 / 70 / -120) still left visible gaps inside
+  // small clusters; this tuning tightens the mesh further.
+  charge: -80,
+  linkDistance: 50,
+  collide: 12,
+  centerStrength: 0.2,
+  clusterPull: 0.7,
 };
+
+/**
+ * Single-stage force-directed layout WITHOUT cluster grouping.
+ *
+ * Unlike `clusterForceDirectedLayout`, this does not partition nodes
+ * by clusterId, does not run a cluster-level super-node simulation,
+ * and does not produce cluster-group background circles. Every node
+ * participates in one unified mesh — matching the Obsidian look
+ * where the whole graph reads as a single connected body.
+ *
+ * Use this when the cluster layer is not wanted (e.g. a single
+ * article's concept graph where the user wants entities + relations
+ * only, no cluster circles).
+ */
+export function simpleForceDirectedLayout(
+  nodes: Node[],
+  edges: Edge[],
+  options?: {
+    width?: number;
+    height?: number;
+    ticks?: number;
+    params?: Partial<ForceParams>;
+  }
+): Node[] {
+  if (nodes.length === 0) return nodes;
+
+  const width = options?.width ?? 1700;
+  const height = options?.height ?? 1200;
+  const ticks = options?.ticks ?? 400;
+
+  interface SimNode extends SimulationNodeDatum {
+    id: string;
+    importance: number;
+  }
+  interface SimLink extends SimulationLinkDatum<SimNode> {
+    distance: number;
+  }
+
+  const simNodes: SimNode[] = nodes.map((n) => ({
+    id: n.id,
+    x: n.position?.x ?? width / 2 + (Math.random() - 0.5) * width * 0.4,
+    y: n.position?.y ?? height / 2 + (Math.random() - 0.5) * height * 0.4,
+    importance: ((n.data as Record<string, unknown>)?.importance as number) ?? 0,
+  }));
+
+  const linkDistance = options?.params?.linkDistance ?? 50;
+  const simLinks: SimLink[] = edges
+    .filter((e) => e.source && e.target)
+    .map((e) => {
+      const weight = ((e.data as Record<string, unknown>)?.weight as number) ?? 1;
+      return {
+        source: e.source,
+        target: e.target,
+        // Higher weight → slightly shorter distance.
+        distance: Math.max(30, linkDistance - weight * 10),
+      } as SimLink;
+    });
+
+  const chargeStrength = options?.params?.charge ?? -80;
+  const collideRadius = options?.params?.collide ?? 12;
+  const centerStrength = options?.params?.centerStrength ?? 0.2;
+
+  const simulation = forceSimulation<SimNode>(simNodes)
+    .force(
+      "link",
+      forceLink<SimNode, SimLink>(simLinks)
+        .id((d) => d.id)
+        .distance((d) => d.distance)
+        .strength(0.3)
+    )
+    .force("charge", forceManyBody().strength(chargeStrength))
+    .force("center", forceCenter(width / 2, height / 2).strength(centerStrength))
+    .force(
+      "collide",
+      forceCollide<SimNode>().radius((d) => collideRadius + d.importance * 14)
+    )
+    .stop();
+
+  for (let i = 0; i < ticks; i++) simulation.tick();
+
+  // Map positions and recenter the bounding box on the canvas.
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  const posMap = new Map<string, { x: number; y: number }>();
+  for (const sn of simNodes) {
+    const x = sn.x ?? 0;
+    const y = sn.y ?? 0;
+    posMap.set(sn.id, { x, y });
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  const offsetX = width / 2 - (minX + maxX) / 2;
+  const offsetY = height / 2 - (minY + maxY) / 2;
+
+  return nodes.map((n) => {
+    const pos = posMap.get(n.id);
+    return pos
+      ? { ...n, position: { x: pos.x + offsetX, y: pos.y + offsetY }, zIndex: 10 }
+      : n;
+  });
+}
+
+/**
+ * Remove nodes that have no incident edges. The KG pipeline can emit
+ * concepts that never co-occur with any other concept — these would
+ * render as lonely dots floating away from the mesh. The user wants
+ * "no entity exists in isolation", so we drop them before layout.
+ *
+ * Edges referencing dropped nodes are also removed (defensive — they
+ * shouldn't exist if the node had degree 0, but the filter is cheap).
+ */
+export function filterIsolatedNodes(
+  nodes: Node[],
+  edges: Edge[]
+): { nodes: Node[]; edges: Edge[] } {
+  const connectedIds = new Set<string>();
+  for (const e of edges) {
+    if (e.source) connectedIds.add(e.source);
+    if (e.target) connectedIds.add(e.target);
+  }
+  const filteredNodes = nodes.filter((n) => connectedIds.has(n.id));
+  const filteredEdges = edges.filter(
+    (e) => connectedIds.has(e.source) && connectedIds.has(e.target)
+  );
+  return { nodes: filteredNodes, edges: filteredEdges };
+}
+
+/**
+ * Mark the highest-degree node as the "main" node by injecting
+ * `data.isMain = true` on exactly one node (the one with the most
+ * incident edges; ties broken by importance, then by id for
+ * determinism). All other nodes get `data.isMain = false`.
+ *
+ * The renderer uses this to apply a distinct accent color so the
+ * central hub of the graph is immediately visible.
+ */
+export function markMainNode(nodes: Node[]): Node[] {
+  if (nodes.length === 0) return nodes;
+  let bestId: string | null = null;
+  let bestDegree = -1;
+  let bestImportance = -1;
+  for (const n of nodes) {
+    const d = (n.data as Record<string, unknown>)?.degree as number ?? 0;
+    const imp = (n.data as Record<string, unknown>)?.importance as number ?? 0;
+    if (d > bestDegree || (d === bestDegree && imp > bestImportance)) {
+      bestDegree = d;
+      bestImportance = imp;
+      bestId = n.id;
+    }
+  }
+  if (!bestId) return nodes;
+  return nodes.map((n) => ({
+    ...n,
+    data: { ...(n.data as Record<string, unknown>), isMain: n.id === bestId },
+  }));
+}
 
 export function clusterForceDirectedLayout(
   nodes: Node[],
@@ -460,19 +626,26 @@ export function clusterForceDirectedLayout(
     });
   }
 
-  // Determine a minimum distance so circles don't overlap.
+  // Determine a minimum distance so circles don't overlap. We use a
+  // *soft* collision (0.35 strength) instead of a hard one so
+  // cluster boundaries can intersect in the final view, matching
+  // the Obsidian look where related cluster circles overlap rather
+  // than being repelled apart. Hard collision caused each circle
+  // to be its own island.
   const minClusterDist =
-    clusterSimNodes.reduce((s, c) => s + c.radius, 0) / Math.max(clusterSimNodes.length, 1) * 1.6 + 40;
+    clusterSimNodes.reduce((s, c) => s + c.radius, 0) / Math.max(clusterSimNodes.length, 1) * 0.5 + 10;
 
   const clusterSim = forceSimulation<SimClusterCenter>(clusterSimNodes)
-    // Mutually repel so clusters spread out.
-    .force("cluster-charge", forceManyBody().strength(-minClusterDist * 6).distanceMax(minClusterDist * 2))
+    // Mild mutual repulsion — just enough to keep centers from
+    // collapsing into a single point. Was *2, now *1.2 so related
+    // clusters sit closer and the whole graph reads as one body.
+    .force("cluster-charge", forceManyBody().strength(-minClusterDist * 1.2).distanceMax(minClusterDist * 2))
     // Strong center pull so clusters never drift off-canvas.
-    .force("cluster-center", forceCenter(width / 2, height / 2).strength(0.25))
-    // Hard collision against other clusters.
+    .force("cluster-center", forceCenter(width / 2, height / 2).strength(0.4))
+    // Soft collision so circles may overlap.
     .force(
       "cluster-collide",
-      forceCollide<SimClusterCenter>().radius((d) => d.radius + 20).strength(1)
+      forceCollide<SimClusterCenter>().radius((d) => d.radius * 0.5).strength(0.35)
     )
     .stop();
 
@@ -589,7 +762,7 @@ export function clusterForceDirectedLayout(
       },
       selectable: false,
       draggable: false,
-      zIndex: 0,
+      zIndex: 1,
     } as Node);
   }
 

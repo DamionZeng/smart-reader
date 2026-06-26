@@ -33,7 +33,7 @@ import { normaliseGraph } from "@/utils/graph-normalize";
 import { exportAndDownload } from "@/utils/export-markdown";
 import type { ExportFormat } from "@/utils/export-markdown";
 import { exportGraphAsImage } from "@/utils/export-image";
-import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, type LayoutTemplate, type ForceParams, DEFAULT_FORCE_PARAMS } from "@/utils/auto-layout";
+import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, simpleForceDirectedLayout, filterIsolatedNodes, markMainNode, type LayoutTemplate, type ForceParams, DEFAULT_FORCE_PARAMS } from "@/utils/auto-layout";
 import { pickFirstString } from "@/utils/string";
 import { buildEdge } from "@/utils/edge-style";
 import {
@@ -45,6 +45,7 @@ import { ExplanationPanel } from "@/components/board/ExplanationPanel";
 import { ConceptNode } from "@/components/Nodes/ConceptNode";
 import { ConceptGraphNode } from "@/components/Nodes/ConceptGraphNode";
 import { ClusterGroupNode } from "@/components/Nodes/ClusterGroupNode";
+import { ShortestStraightEdge } from "@/components/Edges/ShortestStraightEdge";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { SaveIndicator, SaveStatus } from "@/components/board/SaveIndicator";
 import { OriginalTextPanel } from "@/components/board/OriginalTextPanel";
@@ -55,7 +56,6 @@ import { EdgeEditorModal } from "@/components/board/EdgeEditorModal";
 import { EdgeTypeLegend } from "@/components/board/EdgeTypeLegend";
 import { LayoutMenu } from "@/components/board/LayoutMenu";
 import { ForceSettingsPanel } from "@/components/board/ForceSettingsPanel";
-import { ClusterLegend } from "@/components/board/ClusterLegend";
 import { createVersion } from "@/api/versions";
 import { conceptGraphToParsedDocument } from "@/utils/concept-graph-bridge";
 import type { ConceptGraph, Concept, ConceptEdge, ConceptCluster } from "@/types/concept-graph";
@@ -65,6 +65,13 @@ const nodeTypes = {
   concept: ConceptNode,
   "concept-graph": ConceptGraphNode,
   "cluster-group": ClusterGroupNode,
+};
+
+const edgeTypes = {
+  // Custom edge: straight line with endpoints on the source/target
+  // circle perimeters (instead of a shared handle). See
+  // ShortestStraightEdge.tsx for the full rationale.
+  shortest: ShortestStraightEdge,
 };
 
 // Auto-save tuning
@@ -301,14 +308,15 @@ function BoardPageInner() {
         // P2-1: concept node — fade if a cluster is focused AND this
         // node isn't a member of it
         const clusterFaded = focusedMemberIds ? !focusedMemberIds.has(n.id) : false;
-        if (d && (d.isHoverNeighbor || d.isFaded || clusterFaded)) {
-          const { isHoverNeighbor: _h, isFaded: _f, ...rest } = d;
+        if (d && (d.isHoverNeighbor || d.isFaded || d.isHovered || clusterFaded)) {
+          const { isHoverNeighbor: _h, isFaded: _f, isHovered: _hd, ...rest } = d;
           return {
             ...n,
             data: {
               ...rest,
               isHoverNeighbor: false,
               isFaded: clusterFaded,
+              isHovered: false,
             },
           };
         }
@@ -333,6 +341,7 @@ function BoardPageInner() {
         ...n,
         data: {
           ...(n.data as Record<string, unknown>),
+          isHovered: n.id === hoveredNodeId,
           isHoverNeighbor: hoverNeighborIds.has(n.id) && n.id !== hoveredNodeId,
           isFaded: clusterFaded || !hoverNeighborIds.has(n.id),
         },
@@ -341,26 +350,52 @@ function BoardPageInner() {
   }, [nodes, hiddenClusterIds, hoverNeighborIds, hoveredNodeId, focusedClusterId, handleFocusCluster]);
 
   const visibleEdges = useMemo(() => {
-    if (hiddenClusterIds.size === 0) return edges;
-    // Build a quick lookup of which concept node IDs are currently hidden
-    // so we can drop edges that connect to a hidden endpoint.
-    const hiddenNodeIds = new Set<string>();
-    for (const n of nodes) {
-      if (n.type === "cluster-group") {
-        if (hiddenClusterIds.has(n.id)) {
-          hiddenNodeIds.add(n.id);
+    // First, filter out edges connected to hidden cluster nodes.
+    let result = edges;
+    if (hiddenClusterIds.size > 0) {
+      const hiddenNodeIds = new Set<string>();
+      for (const n of nodes) {
+        if (n.type === "cluster-group") {
+          if (hiddenClusterIds.has(n.id)) {
+            hiddenNodeIds.add(n.id);
+          }
+          continue;
         }
-        continue;
+        const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
+          | string
+          | undefined;
+        if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
       }
-      const cid = (n.data as Record<string, unknown> | undefined)?.clusterId as
-        | string
-        | undefined;
-      if (cid && hiddenClusterIds.has(cid)) hiddenNodeIds.add(n.id);
+      result = edges.filter(
+        (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
+      );
     }
-    return edges.filter(
-      (e) => !hiddenNodeIds.has(e.source) && !hiddenNodeIds.has(e.target)
-    );
-  }, [nodes, edges, hiddenClusterIds]);
+
+    // Highlight edges connected to the hovered node (Obsidian-style
+    // spotlight). Keep original color/opacity; nudge width by a hair
+    // (1.2×, capped at 1.5px). Non-incident edges dimmed to ~8%.
+    if (!hoveredNodeId) return result;
+    return result.map((e) => {
+      const isHighlighted = e.source === hoveredNodeId || e.target === hoveredNodeId;
+      if (isHighlighted) {
+        const baseW = e.style?.strokeWidth ?? 1;
+        return {
+          ...e,
+          style: {
+            ...e.style,
+            strokeWidth: Math.min(baseW * 1.2, 1.5),
+          },
+        };
+      }
+      return {
+        ...e,
+        style: {
+          ...e.style,
+          strokeOpacity: 0.08,
+        },
+      };
+    });
+  }, [nodes, edges, hiddenClusterIds, hoveredNodeId]);
 
   const handleToggleCluster = useCallback((clusterId: string) => {
     setHiddenClusterIds((prev) => {
@@ -622,11 +657,18 @@ function BoardPageInner() {
             },
           }));
           const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(flowNodes, flowEdges);
+          // No cluster layer: filter isolated nodes, mark main hub,
+          // run single-stage force layout (unified mesh).
+          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
+          const markedNodes = markMainNode(connectedNodes);
+          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges, {
+            width: 1700,
+            height: 1200,
+          });
           initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = flowEdges;
-          setNodes([...clusterGroups, ...positionedNodes]);
-          setEdges(flowEdges);
+          initialEdgesRef.current = connectedEdges;
+          setNodes(positionedNodes);
+          setEdges(connectedEdges);
           // Fit view after layout so the graph is centered and visible
           setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
         } else {
@@ -1047,13 +1089,18 @@ function BoardPageInner() {
             },
           }));
           const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          // Apply cluster-aware force-directed layout
-          const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(flowNodes, flowEdges);
-          setNodes([...clusterGroups, ...positionedNodes]);
-          setEdges(flowEdges);
+          // No cluster layer: filter isolated, mark main, single-stage layout.
+          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
+          const markedNodes = markMainNode(connectedNodes);
+          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges, {
+            width: 1700,
+            height: 1200,
+          });
+          setNodes(positionedNodes);
+          setEdges(connectedEdges);
           initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = flowEdges;
-          syncClusterCenters(clusterGroups);
+          initialEdgesRef.current = connectedEdges;
+          syncClusterCenters([]);
           setHiddenClusterIds(new Set());
           // Fit view after layout so the graph is centered and visible
           setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
@@ -1103,16 +1150,14 @@ function BoardPageInner() {
   // ----- Apply a named layout template -----
   const handleApplyTemplate = useCallback((template: LayoutTemplate) => {
     commit();
-    // Filter out cluster-group nodes — they are regenerated by the layout
     const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
     if (template === "force") {
-      const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(
+      const positionedNodes = simpleForceDirectedLayout(
         conceptNodes,
         edgesRef.current,
-        { width: 2200, height: 1500, params: forceParams }
+        { width: 1700, height: 1200, params: forceParams }
       );
-      setNodes([...clusterGroups, ...positionedNodes]);
-      syncClusterCenters(clusterGroups);
+      setNodes(positionedNodes);
       setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
     } else {
       const laidOut = applyLayoutTemplate(conceptNodes, edgesRef.current, template);
@@ -1130,13 +1175,12 @@ function BoardPageInner() {
     setForceParams(next);
     const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
     if (conceptNodes.length === 0) return;
-    const { nodes: positionedNodes, clusterGroups } = clusterForceDirectedLayout(
+    const positionedNodes = simpleForceDirectedLayout(
       conceptNodes,
       edgesRef.current,
-      { width: 2200, height: 1500, params: next }
+      { width: 1700, height: 1200, params: next }
     );
-    setNodes([...clusterGroups, ...positionedNodes]);
-    syncClusterCenters(clusterGroups);
+    setNodes(positionedNodes);
     setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 300 }), 60);
   }, [setNodes, rfInstance]);
 
@@ -1464,6 +1508,7 @@ function BoardPageInner() {
             onInit={setRfInstance}
             deleteKeyCode={null}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             connectionMode={ConnectionMode.Loose}
             fitView
             fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
@@ -1579,15 +1624,6 @@ function BoardPageInner() {
                   alwaysShow
                 />
               </div>
-            </Panel>
-            <Panel position="bottom-left" className="!mb-4">
-              <ClusterLegend
-                clusters={clusterLegend}
-                clusterCenters={clusterCenters}
-                hiddenClusterIds={hiddenClusterIds}
-                onToggle={handleToggleCluster}
-                onLocate={handleLocateCluster}
-              />
             </Panel>
             {kgError && (
               <Panel position="top-center" className="!mt-2">

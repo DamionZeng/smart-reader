@@ -258,3 +258,31 @@ body::-webkit-scrollbar-thumb:hover {
 .ingest-flow-streak {
   animation: flow-streak 1.4s linear infinite;
 }
+
+/* ============================================================
+   Skeleton shimmer — Editorial 风格的骨架屏动画
+   极淡的从左到右扫光，不破坏单色克制调性
+   ============================================================ */
+@keyframes skeleton-shimmer {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+.skeleton-pulse {
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+/* ============================================================
+   UserMenu — 下拉菜单揭示动画
+   ============================================================ */
+@keyframes menuReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(-6px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

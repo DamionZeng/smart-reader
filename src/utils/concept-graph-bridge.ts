@@ -76,8 +76,32 @@ export function conceptGraphToParsedDocument(graph: ConceptGraph): ParsedDocumen
     degreeMap.set(edge.source, (degreeMap.get(edge.source) ?? 0) + 1);
     degreeMap.set(edge.target, (degreeMap.get(edge.target) ?? 0) + 1);
   }
+
+  // Pre-compute the visual circle radius for every concept node so
+  // the custom `shortest` edge type can read it from node data and
+  // draw a line that stops at each circle's perimeter (instead of
+  // running from a single shared handle). The radius mirrors the
+  // 3-tier sizing in ConceptGraphNode.tsx:
+  //   - sizeScore >= 0.7 → 14
+  //   - sizeScore >= 0.4 → 11
+  //   - otherwise          8
+  function computeRadius(c: Concept, degree: number): number {
+    const importance = c.importance ?? 0;
+    const degreeWeight = Math.min(1, Math.log(1 + degree) / Math.log(1 + 20));
+    const freqWeight = Math.min(1, Math.log(1 + (c.frequency ?? 0)) / Math.log(1 + 30));
+    const sizeScore = Math.max(importance, degreeWeight, freqWeight);
+    if (sizeScore >= 0.7) return 14;
+    if (sizeScore >= 0.4) return 11;
+    return 8;
+  }
+
   for (const node of nodes) {
-    (node.data as Record<string, unknown>).degree = degreeMap.get(node.id) ?? 0;
+    const d = node.data as Record<string, unknown>;
+    d.degree = degreeMap.get(node.id) ?? 0;
+    d.radius = computeRadius(
+      graph.concepts.find((c) => c.id === node.id) ?? ({ id: node.id } as Concept),
+      d.degree as number
+    );
   }
 
   // Drop edges that reference concepts we just dropped (or were never

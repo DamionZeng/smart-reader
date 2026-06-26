@@ -110,7 +110,15 @@ export function useIngestionFlow(
   const kgAbortRef = useRef<AbortController | null>(null);
   // Controller for the per-poll GET (/api/concept-graph/jobs/[id]).
   const pollAbortRef = useRef<AbortController | null>(null);
+  // Tracks the jobId that the polling effect has already picked up,
+  // so React StrictMode's double-invocation in dev doesn't kick off
+  // two parallel poll loops for the same job. This ref is ONLY set
+  // inside the polling effect — never pre-seeded elsewhere.
   const polledJobIdRef = useRef<string | null>(null);
+  // Separate ref holding the active job id for the Cancel button.
+  // Decoupled from `polledJobIdRef` so that pre-seeding the cancel
+  // target doesn't short-circuit the polling effect's dedupe check.
+  const cancelJobIdRef = useRef<string | null>(null);
   // Track whether the user explicitly cancelled so the polling effect
   // can exit without surfacing a misleading "Pipeline failed" error.
   const cancelledRef = useRef<boolean>(false);
@@ -132,7 +140,7 @@ export function useIngestionFlow(
     abortRef.current?.abort();
     kgAbortRef.current?.abort();
     pollAbortRef.current?.abort();
-    const jobId = polledJobIdRef.current;
+    const jobId = cancelJobIdRef.current;
     if (jobId) {
       // Fire-and-forget: best-effort. We don't await because the
       // user has already clicked Cancel — we shouldn't make them
@@ -152,6 +160,7 @@ export function useIngestionFlow(
     setIngestStage("preparing");
     setIngestError(null);
     projectIdRef.current = null;
+    cancelJobIdRef.current = null;
   }, []);
 
   const clearExistingProject = useCallback(() => {
@@ -168,6 +177,7 @@ export function useIngestionFlow(
     setKgJobId(null);
     setExistingProject(null);
     projectIdRef.current = null;
+    cancelJobIdRef.current = null;
   }, []);
 
   // ----- Poll the KG job status until done/failed/cancelled -----
@@ -323,11 +333,16 @@ export function useIngestionFlow(
         const { jobId } = await resp.json();
         if (!jobId) throw new Error("No job id returned");
         setKgJobId(jobId);
-        // Pre-seed the polledJobIdRef so the Cancel button can
-        // call /api/concept-graph/jobs/<id>/cancel even if the
-        // polling effect hasn't run yet (race window between the
-        // POST returning and the effect firing).
-        polledJobIdRef.current = jobId;
+        // Pre-seed the cancel target so the Cancel button can call
+        // /api/concept-graph/jobs/<id>/cancel even if the polling
+        // effect hasn't run yet (race window between the POST
+        // returning and the effect firing).
+        //
+        // NOTE: do NOT write to `polledJobIdRef` here — that ref is
+        // the polling effect's dedupe flag and pre-seeding it would
+        // cause the effect to skip polling entirely, leaving the UI
+        // stuck on "extracting text" forever.
+        cancelJobIdRef.current = jobId;
       } catch (err: any) {
         // User cancelled before/during the POST — the cancel
         // handler has already reset UI state, just bail out.
@@ -360,6 +375,7 @@ export function useIngestionFlow(
       // cancelled by the polling effect.
       cancelledRef.current = false;
       polledJobIdRef.current = null;
+      cancelJobIdRef.current = null;
 
       const abortController = new AbortController();
       abortRef.current = abortController;

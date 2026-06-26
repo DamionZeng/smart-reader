@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Handle, Position, useViewport } from '@xyflow/react';
+import { Handle, Position } from '@xyflow/react';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 
@@ -26,12 +26,30 @@ interface ConceptGraphNodeData {
   isActive?: boolean;
   isHoverNeighbor?: boolean;
   isFaded?: boolean;
+  /**
+   * True on the node currently under the cursor. Used to show that
+   * node's label (and its neighbors' labels) on hover — labels are
+   * hidden by default to keep the canvas clean.
+   */
+  isHovered?: boolean;
   clusterId?: string;
+  /**
+   * Kept on the data for downstream consumers (e.g. a future "find
+   * nodes in same cluster" interaction), but no longer used for the
+   * node fill. All nodes use a single color now (see nodeColor).
+   */
   clusterColor?: string;
   clusterLabel?: string;
   importance?: number;
   frequency?: number;
   degree?: number;
+  /**
+   * True on the single node with the highest degree (most connections).
+   * The renderer applies a distinct accent color so the central hub
+   * of the graph is immediately visible — the "main concept" of the
+   * article. Injected by `markMainNode` before layout.
+   */
+  isMain?: boolean;
   conceptType?: string;
   aliases?: string[];
   anchors?: string[];
@@ -70,42 +88,57 @@ const TYPE_LABELS: Record<string, string> = {
 
 function ConceptGraphNodeComponent({ data, selected }: { data?: ConceptGraphNodeData; selected?: boolean }) {
   const { t } = useTranslation();
-  const { zoom } = useViewport();
   const importance = data?.importance ?? 0;
   const degree = data?.degree ?? 0;
-  const clusterColor = data?.clusterColor || '#1C1C1C';
+  const frequency = data?.frequency ?? 0;
+  // Obsidian-style: every concept node is the same solid color.
+  // The ONE exception is `isMain` — the single highest-degree hub
+  // gets a distinct accent (editorial red) so the article's central
+  // concept is immediately visible at a glance.
+  const isMain = !!data?.isMain;
+  const nodeColor = isMain ? '#991B1B' : '#1C1C1C';
 
-  // P1-3: size by both importance AND degree. A high-degree hub should
-  // be visually larger even if the LLM marked it as low importance,
-  // because it's structurally central to the graph. We blend the two:
+  // P1-3: size by importance AND degree (structural centrality). For
+  // a concept graph we ALSO want to scale by `frequency` (how many
+  // times the concept was mentioned in the source text), since a
+  // concept that appears 30 times is a more prominent topic than one
+  // that appears once even if the LLM scored them similarly.
   //   - importance normalized to [0, 1]
-  //   - degree normalized via log(1 + degree) / log(1 + maxDegree=20)
-  //     (log so a node with 20 edges isn't 20x bigger than one with 1)
-  //   - final size score = max(importance, degreeWeight) so a high
-  //     score on EITHER axis pushes the node up a tier
+  //   - degree normalized via log(1+degree)/log(1+20)  (log so 20
+  //     edges isn't 20× bigger than 1)
+  //   - frequency normalized via log(1+frequency)/log(1+30)  (log
+  //     so a 50-mention concept isn't 50× bigger than a 1-mention)
+  //   - final size score = max(importance, degreeWeight, freqWeight)
+  //     so a high score on ANY axis pushes the node up a tier.
   const degreeWeight = Math.min(1, Math.log(1 + degree) / Math.log(1 + 20));
-  const sizeScore = Math.max(importance, degreeWeight);
+  const freqWeight = Math.min(1, Math.log(1 + frequency) / Math.log(1 + 30));
+  const sizeScore = Math.max(importance, degreeWeight, freqWeight);
 
-  // Size tiers by combined score
+  // Smaller sizes than before — Obsidian-style compact nodes. Old
+  // sizes (72/56/40px) were too large relative to the cluster
+  // circles; the new range (28/22/16px) reads as "dots" until you
+  // hover, while high-importance hubs still pop.
+  const nodeRadius =
+    sizeScore >= 0.7 ? 14 :
+    sizeScore >= 0.4 ? 11 :
+    8;
   const sizeClass =
-    sizeScore >= 0.7 ? 'w-[72px] h-[72px]' :
-    sizeScore >= 0.4 ? 'w-[56px] h-[56px]' :
-    'w-[40px] h-[40px]';
+    sizeScore >= 0.7 ? 'w-7 h-7' :
+    sizeScore >= 0.4 ? 'w-[22px] h-[22px]' :
+    'w-4 h-4';
 
   const labelSizeClass =
     sizeScore >= 0.7 ? 'text-xs' :
     sizeScore >= 0.4 ? 'text-[11px]' :
     'text-[10px]';
 
-  // Zoom-aware label visibility. When zoomed out, hide labels for
-  // low-importance nodes so the canvas doesn't become a sea of text.
-  // Thresholds: zoom<0.5 → only high; <0.8 → medium+; >=0.8 → all.
-  // We use opacity transition instead of display:none so the layout
-  // doesn't jump as the user scrolls.
-  const labelOpacity =
-    zoom >= 0.8 ? 'opacity-100' :
-    zoom >= 0.5 ? (sizeScore >= 0.4 ? 'opacity-100' : 'opacity-0') :
-    (sizeScore >= 0.7 ? 'opacity-100' : 'opacity-0');
+  // Labels are hidden by default and only surface on hover. When the
+  // user hovers a node, the parent injects `isHovered` on that node
+  // and `isHoverNeighbor` on its direct neighbors — we show labels
+  // for both so the user can read the hovered concept plus its
+  // immediate context. Everything else stays label-free to keep the
+  // canvas readable at a glance.
+  const showLabel = !!(data?.isHovered || data?.isHoverNeighbor);
 
   // P2-2: staggered entrance animation delay. The parent injects this
   // based on importance rank so high-importance nodes appear first.
@@ -117,48 +150,63 @@ function ConceptGraphNodeComponent({ data, selected }: { data?: ConceptGraphNode
         "relative flex flex-col items-center justify-center transition-all duration-200 animate-in fade-in zoom-in-50 duration-300",
         data?.isActive && "z-10 scale-110",
         data?.isHoverNeighbor && "z-10 scale-105",
-        data?.isFaded && "opacity-20"
+        data?.isFaded && "opacity-15"
       )}
       style={{ width: 90, animationDelay: `${entranceDelay}ms` }}
     >
-      <Handle type="target" position={Position.Top} className="!w-1 !h-1 !min-w-0 !min-h-0 !bg-transparent !border-none !opacity-0" />
+      {/* Obsidian-style solid node. Edges are rendered below the HTML
+          node layer so the opaque fill hides any line segments that
+          pass through the circle. No border by default — solid dots
+          read as proper "data points" instead of UI chips.
 
-      {/* Node circle */}
+          On hover we DO NOT modify the node itself (no ring, no scale
+          change beyond the existing scale-105 for hover-neighbor).
+          Instead, the parent fades non-incident nodes (isFaded) and
+          dims non-incident edges, so the hovered subgraph stands out
+          by contrast — exactly how Obsidian does it. */}
       <div
         className={cn(
-          "rounded-full flex items-center justify-center transition-all duration-200 border-2",
+          "relative rounded-full transition-all duration-200",
           sizeClass,
-          selected || data?.isActive
-            ? "shadow-md"
-            : data?.isHoverNeighbor
-            ? "shadow-md ring-2 ring-offset-1"
-            : "hover:shadow-sm"
         )}
         style={{
-          backgroundColor: `${clusterColor}20`,
-          borderColor: clusterColor,
-          borderWidth: selected || data?.isActive ? 3 : data?.isHoverNeighbor ? 3 : 2,
+          backgroundColor: nodeColor,
         }}
+        data-node-radius={nodeRadius}
       >
-        {/* Type badge for high-importance nodes (uses sizeScore so hubs get it too) */}
-        {sizeScore >= 0.7 && data?.conceptType && TYPE_LABELS[data.conceptType] && (
-          <span
-            className="text-[8px] font-mono uppercase tracking-wider opacity-60"
-            style={{ color: clusterColor }}
-          >
-            {TYPE_LABELS[data.conceptType]}
-          </span>
-        )}
+        {/* Single hidden handle per type. The custom `shortest` edge
+            does NOT use the handle position for routing — it
+            computes the start/end points on the circle perimeter
+            directly from the source/target node centers and the
+            node radius stored in data-node-radius. This way, when
+            one node has many edges, each line leaves the circle at
+            the closest point to its specific target, so they fan
+            out cleanly instead of stacking on a single handle. */}
+        <Handle
+          id="target"
+          type="target"
+          position={Position.Top}
+          className="!w-1 !h-1 !min-w-0 !min-h-0 !bg-transparent !border-none !opacity-0"
+        />
+        <Handle
+          id="source"
+          type="source"
+          position={Position.Top}
+          className="!w-1 !h-1 !min-w-0 !min-h-0 !bg-transparent !border-none !opacity-0"
+        />
       </div>
 
-      {/* Label below node */}
+      {/* Label — absolutely positioned below the circle so it doesn't
+          affect the node's layout box (and therefore doesn't pull the
+          Bottom handle down). Hidden by default; revealed on hover. */}
       <div
         className={cn(
-          "mt-1 text-center font-sans leading-tight max-w-[90px] truncate transition-opacity duration-200",
+          "absolute top-full mt-1 text-center font-sans leading-tight max-w-[120px] truncate transition-opacity duration-150 pointer-events-none whitespace-nowrap z-20",
           labelSizeClass,
-          labelOpacity,
+          showLabel ? "opacity-100" : "opacity-0",
           selected || data?.isActive ? "text-[#1C1C1C] font-medium" : "text-[#1C1C1C]/70"
         )}
+        style={{ left: "50%", transform: "translateX(-50%)" }}
         title={data?.title}
       >
         {data?.title}
@@ -181,8 +229,6 @@ function ConceptGraphNodeComponent({ data, selected }: { data?: ConceptGraphNode
           {data.sourceDocuments.length}
         </span>
       )}
-
-      <Handle type="source" position={Position.Bottom} className="!w-1 !h-1 !min-w-0 !min-h-0 !bg-transparent !border-none !opacity-0" />
     </div>
   );
 }
