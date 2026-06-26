@@ -1,0 +1,260 @@
+@import "tailwindcss";
+
+:root {
+  --bg-paper: #F9F8F6;
+  --ink: #1C1C1C;
+}
+
+@theme {
+  --font-serif: var(--font-playfair), "Playfair Display", Georgia, serif;
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-editorial-bg: var(--bg-paper);
+  --color-editorial-text: var(--ink);
+}
+
+body {
+  background-color: var(--color-editorial-bg);
+  color: var(--color-editorial-text);
+  margin: 0;
+}
+
+::selection {
+  background-color: var(--ink);
+  color: var(--bg-paper);
+}
+
+/* ============================================================
+   Editorial Slider — applies globally to <input type="range">
+   - 1px track, no rounded corners, no shadows
+   - Square thumb with 1px border
+   - Filled portion is solid #1C1C1C
+   ============================================================ */
+input[type="range"].editorial-slider,
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* WebKit / Blink (Chrome, Edge, Safari) */
+input[type="range"].editorial-slider::-webkit-slider-runnable-track,
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+  border: none;
+  border-radius: 0;
+}
+
+input[type="range"].editorial-slider::-webkit-slider-thumb,
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--color-editorial-bg);
+  border: 1px solid var(--color-editorial-text);
+  border-radius: 0;
+  margin-top: -6px;
+  cursor: grab;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 200ms ease;
+  box-shadow: none;
+}
+
+input[type="range"].editorial-slider:hover::-webkit-slider-thumb,
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.25);
+  background: var(--color-editorial-text);
+}
+
+input[type="range"].editorial-slider:active::-webkit-slider-thumb,
+input[type="range"]:active::-webkit-slider-thumb {
+  cursor: grabbing;
+  background: var(--color-editorial-text);
+}
+
+input[type="range"].editorial-slider:focus-visible::-webkit-slider-thumb,
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-editorial-text);
+  outline-offset: 2px;
+}
+
+/* Firefox */
+input[type="range"].editorial-slider::-moz-range-track,
+input[type="range"]::-moz-range-track {
+  height: 1px;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+  border: none;
+  border-radius: 0;
+}
+
+input[type="range"].editorial-slider::-moz-range-progress,
+input[type="range"]::-moz-range-progress {
+  height: 1px;
+  background: var(--color-editorial-text);
+  border-radius: 0;
+}
+
+input[type="range"].editorial-slider::-moz-range-thumb,
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--color-editorial-bg);
+  border: 1px solid var(--color-editorial-text);
+  border-radius: 0;
+  cursor: grab;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 200ms ease;
+  box-shadow: none;
+}
+
+input[type="range"].editorial-slider:hover::-moz-range-thumb,
+input[type="range"]:hover::-moz-range-thumb {
+  transform: scale(1.25);
+  background: var(--color-editorial-text);
+}
+
+input[type="range"].editorial-slider:focus-visible::-moz-range-thumb,
+input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--color-editorial-text);
+  outline-offset: 2px;
+}
+
+/* Disabled state */
+input[type="range"].editorial-slider:disabled,
+input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type="range"].editorial-slider:disabled::-webkit-slider-thumb,
+input[type="range"]:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Editorial Scrollbar — applies globally to all scrollable areas
+   - 4px thin, square corners, no shadows
+   - Transparent track, monochrome thumb with varying opacity
+   - Matches the editorial design language (no rounded, no color)
+   ============================================================ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink) 30%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+  border: none;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  border: none;
+  border-radius: 0;
+  transition: background-color 200ms ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink) 60%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--ink) 80%, transparent);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Keep the html/body scrollbar a touch more visible since it
+   is the primary page-level control. */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 25%, transparent);
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
+/* ============================================================
+   React Flow cursors — editorial override
+   The library's default `grab` / `grabbing` cursors render as a
+   white hand on Windows, which becomes invisible on the
+   #F9F8F6 background after the first click (the system
+   `grabbing` cursor on Windows 10+ has no outline). We replace
+   every grab/grabbing context with a custom SVG cursor that has
+   a dark #1C1C1C stroke plus a white fill so it is guaranteed
+   visible regardless of OS theme or background.
+   ============================================================ */
+
+/* Pane idle: default arrow. React Flow uses inline `style={{ cursor }}`
+   for the panning state so we need !important to win the specificity. */
+.react-flow__pane {
+  cursor: default !important;
+}
+
+/* Node idle: standard move cross (never goes white). */
+.react-flow__node {
+  cursor: move;
+}
+
+/* Handle: keep crosshair (never goes white). */
+.react-flow__handle {
+  cursor: crosshair;
+}
+
+/* ----- dragging / panning — both use the same custom grabbing hand -----
+    The SVG has a white fill + black stroke so it renders as a dark
+    outlined hand, visible on any background. The fallback is `move`
+    (never an invisible white hand in any OS). */
+.react-flow__pane[dragging],
+.react-flow__node-dragging,
+.react-flow__node[data-dragging] {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><rect x='5' y='1.5' width='3.2' height='6.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='10' y='1.5' width='3.2' height='4.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='15' y='3' width='3.2' height='2.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='1' y='12' width='3.2' height='8' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='5' y='8' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='9' y='8.5' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='13' y='10' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='17' y='12' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/></svg>")
+      12 12,
+    move;
+}
+
+/* Also cover the outer ReactFlow wrapper when it receives a
+   `grab` or `grabbing` cursor from library internals. */
+.react-flow[data-panning],
+.react-flow[data-panning] .react-flow__pane {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><rect x='5' y='1.5' width='3.2' height='6.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='10' y='1.5' width='3.2' height='4.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='15' y='3' width='3.2' height='2.8' rx='1.2' fill='%23fff' stroke='%231C1C1C' stroke-width='1.3'/><rect x='1' y='12' width='3.2' height='8' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='5' y='8' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='9' y='8.5' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='13' y='10' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/><rect x='17' y='12' width='3.2' height='5' rx='1.2' fill='%231C1C1C' stroke='%231C1C1C' stroke-width='1.3'/></svg>")
+      12 12,
+    move !important;
+}
+
+/* ============================================================
+   Ingestion flow — animated connector used by IngestionFlow.
+   A 16px white streak travels along a 64px solid #1C1C1C line.
+   ============================================================ */
+@keyframes flow-streak {
+  0% { left: 0; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { left: calc(100% - 1rem); opacity: 0; }
+}
+
+.ingest-flow-streak {
+  animation: flow-streak 1.4s linear infinite;
+}

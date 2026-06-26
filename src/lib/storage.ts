@@ -1,0 +1,208 @@
+/**
+ * Cloudflare R2 存储层
+ *
+ * R2 兼容 S3 API，使用 @aws-sdk/client-s3 走自定义 endpoint 访问。
+ * 图片 key 规则：images/{userId}/{timestamp}-{uuid}.{ext}
+ *   - 用户隔离（每个用户的图片独立前缀）
+ *   - 不可猜测（uuid 段）
+ *   - 不可枚举（时间戳前缀但必须同时知道 userId）
+ *
+ * 公共访问 URL 来自 R2_PUBLIC_URL（r2.dev 子域或自定义域）。
+ * 调用方拿到的是 https URL，可直接放到 <img src>。
+ */
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
+import { randomUUID } from "crypto";
+
+const R2_ENDPOINT = process.env.R2_ENDPOINT_URL;
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY;
+const R2_BUCKET = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
+
+let _client: S3Client | null = null;
+
+function getClient(): S3Client {
+  if (_client) return _client;
+  if (!R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
+    throw new Error(
+      "R2 storage is not configured. Set R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PUBLIC_URL."
+    );
+  }
+  _client = new S3Client({
+    region: "auto",
+    endpoint: R2_ENDPOINT,
+    credentials: {
+      accessKeyId: R2_ACCESS_KEY,
+      secretAccessKey: R2_SECRET_KEY,
+    },
+  });
+  return _client;
+}
+
+/** 是否配置了 R2 所需的环境变量。 */
+export function isR2Configured(): boolean {
+  return Boolean(
+    R2_ENDPOINT && R2_ACCESS_KEY && R2_SECRET_KEY && R2_BUCKET && R2_PUBLIC_URL
+  );
+}
+
+const ACCEPTED_EXTS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+/**
+ * 把公开访问 URL 解析回 R2 内部 key。仅识别本项目配置的 R2_PUBLIC_URL，
+ * 防止误删其他来源的图（外链 / 历史 data-URL）。
+ */
+export function getR2KeyFromPublicUrl(url: string): string | null {
+  if (!R2_PUBLIC_URL) return null;
+  const prefix = R2_PUBLIC_URL.endsWith("/")
+    ? R2_PUBLIC_URL
+    : `${R2_PUBLIC_URL}/`;
+  if (!url.startsWith(prefix)) return null;
+  const key = url.slice(prefix.length);
+  const qIdx = key.indexOf("?");
+  return qIdx >= 0 ? key.slice(0, qIdx) : key;
+}
+
+/**
+ * 上传一张图片到 R2，返回可公开访问的 URL。
+ *  - key 自动生成，包含 userId 前缀
+ *  - MIME 必须是 ACCEPTED_EXTS 中的一种，否则 fallback 到 .bin
+ */
+export async function uploadImage(
+  buffer: Buffer,
+  mime: string,
+  userId: string
+): Promise<string> {
+  if (!isR2Configured()) {
+    throw new Error("R2 storage is not configured.");
+  }
+  const ext = ACCEPTED_EXTS[mime.toLowerCase()] || "bin";
+  // 把 userId 中的非安全字符替换掉，防止路径注入
+  const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const key = `images/${safeUserId}/${Date.now()}-${randomUUID()}.${ext}`;
+  const client = getClient();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET!,
+      Key: key,
+      Body: buffer,
+      ContentType: mime,
+    })
+  );
+  return `${R2_PUBLIC_URL}/${key}`;
+}
+
+/** 删除单个 R2 对象。失败不抛（容忍孤儿）。 */
+export async function deleteImage(key: string): Promise<void> {
+  if (!isR2Configured()) return;
+  const client = getClient();
+  try {
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: R2_BUCKET!,
+        Key: key,
+      })
+    );
+  } catch (e) {
+    console.error(`[storage] Failed to delete R2 object ${key}:`, e);
+  }
+}
+
+/**
+ * 从 nodes jsonb 中提取所有属于本项目 R2 bucket 的 image key。
+ * 自动跳过 data-URL 和外链（不会误删其他来源的图）。
+ */
+export function extractR2ImageKeys(nodes: unknown): string[] {
+  const keys: string[] = [];
+  if (!Array.isArray(nodes)) return keys;
+  for (const n of nodes) {
+    if (!n || typeof n !== "object") continue;
+    const data = (n as { data?: { imageUrl?: unknown } }).data;
+    const url = data?.imageUrl;
+    if (typeof url === "string") {
+      const key = getR2KeyFromPublicUrl(url);
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
+}
+
+/** 批量删除 R2 对象（best-effort，并行，吞错）。 */
+export async function deleteImagesByKeys(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await Promise.all(keys.map((k) => deleteImage(k)));
+}
+
+// === Document-level storage (PDF / code zip / arxiv abs HTML, etc.) ===
+// Key format: documents/{userId}/{docId}/{kind}.{ext}
+//   - All assets for one document live under the same prefix, so a
+//     document deletion is a single `deleteByPrefix` (or per-asset loop
+//     in R2, which has no native prefix-delete in the JS SDK).
+//   - `kind` is a free-form string ('pdf' | 'image-bundle' | 'abs-html'
+//     | 'code-zip' | ...). The DB row in `document_assets` is the
+//     source of truth for which kinds exist for a given document.
+//
+// The `metadata` argument is returned to the caller (DB row stores
+// it as jsonb) so we don't have to round-trip back to R2 to know
+// e.g. the arxiv version of a PDF.
+
+const DOC_EXT_BY_MIME: Record<string, string> = {
+  "application/pdf": "pdf",
+  "application/zip": "zip",
+  "text/html": "html",
+  "text/plain": "txt",
+  "application/octet-stream": "bin",
+};
+
+/**
+ * Upload a document-level asset (PDF, zip, HTML snapshot, etc.) to R2.
+ * Returns the public URL — same shape as `uploadImage`.
+ *
+ * IMPORTANT: `docId` is the database-side document uuid, generated by
+ * the caller (or pre-known from an UPDATE path). The caller is
+ * responsible for inserting the `document_assets` row.
+ */
+export async function uploadDocument(
+  buffer: Buffer,
+  mime: string,
+  userId: string,
+  docId: string,
+  kind: string
+): Promise<string> {
+  if (!isR2Configured()) {
+    throw new Error("R2 storage is not configured.");
+  }
+  const ext = DOC_EXT_BY_MIME[mime.toLowerCase()] || "bin";
+  const safeUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeDocId = docId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeKind = kind.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const key = `documents/${safeUserId}/${safeDocId}/${safeKind}.${ext}`;
+  const client = getClient();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET!,
+      Key: key,
+      Body: buffer,
+      ContentType: mime,
+    })
+  );
+  return `${R2_PUBLIC_URL}/${key}`;
+}
+
+/**
+ * Best-effort delete a document-level asset. Identical to `deleteImage`
+ * but kept as a separate API for clarity at call sites.
+ */
+export async function deleteDocumentAsset(key: string): Promise<void> {
+  return deleteImage(key);
+}

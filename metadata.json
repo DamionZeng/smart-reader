@@ -1,0 +1,7 @@
+{
+  "name": "Canvas Smart Reader",
+  "description": "An AI-powered non-linear canvas reader for translating technical documents into interactive graphs and notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

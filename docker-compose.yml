@@ -1,0 +1,72 @@
+# docker-compose.yml
+#
+# Local development database for smart-reader.
+#
+# Usage:
+#   1. Start the database:      docker compose up -d
+#   2. Wait for healthcheck:    docker compose ps   (status should be "healthy")
+#   3. Set in your .env file:   DATABASE_URL="postgres://smartreader:smartreader@localhost:5432/smartreader"
+#   4. Push the schema:         npx drizzle-kit push
+#   5. Start the app:           npm run dev
+#
+# Stop & wipe all data:        docker compose down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smart-reader-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: smartreader
+      POSTGRES_PASSWORD: smartreader
+      POSTGRES_DB: smartreader
+      # Locale / encoding
+      LANG: C.UTF-8
+      LC_COLLATE: C.UTF-8
+      LC_CTYPE: C.UTF-8
+    volumes:
+      # Persist data across `docker compose down` (use `-v` to wipe).
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-run init scripts on first start.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` returns 0 when the server is accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U smartreader -d smartreader"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    # Slightly higher logging for local debugging; remove in production.
+    command:
+      - "postgres"
+      - "-c"
+      - "log_statement=all"
+      - "-c"
+      - "log_duration=on"
+
+  # Optional: a one-shot admin UI to inspect the database.
+  # Uncomment to use it: `docker compose --profile tools up -d`
+  pgadmin:
+    profiles: ["tools"]
+    image: dpage/pgadmin4:latest
+    container_name: smart-reader-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 80
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: smart-reader-postgres-data
+  pgadmin_data:
+    name: smart-reader-pgadmin-data

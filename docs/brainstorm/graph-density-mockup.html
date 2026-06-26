@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>图谱密度优化 · 方向对比 Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ===== Editorial tokens (mirrors src/app/globals.css) ===== */
+    :root {
+      --bg: #f9f8f6;
+      --bg-deep: #efece6;
+      --text: #1c1c1c;
+      --text-soft: #1c1c1c99;
+      --text-faint: #1c1c1c66;
+      --text-ghost: #1c1c1c33;
+      --line: #1c1c1c20;
+      --line-strong: #1c1c1c40;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-deep);
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .page {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 56px 28px 80px;
+    }
+    .page-header {
+      margin-bottom: 36px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 28px;
+    }
+    .page-header h1 {
+      font-family: "Playfair Display", Georgia, serif;
+      font-size: 48px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin: 0 0 10px;
+    }
+    .page-header p {
+      color: var(--text-soft);
+      max-width: 820px;
+      margin: 0;
+    }
+    .page-header .meta {
+      margin-top: 12px;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .panel {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      padding: 22px 22px 18px;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+    }
+    .panel-header h2 {
+      font-family: "Playfair Display", Georgia, serif;
+      font-size: 22px;
+      font-weight: 500;
+      margin: 0;
+    }
+    .panel-header .tag {
+      font-size: 9px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+    .canvas {
+      position: relative;
+      background-color: var(--bg);
+      background-image: radial-gradient(circle, #1c1c1c10 1px, transparent 1px);
+      background-size: 16px 16px;
+      border: 1px solid var(--line);
+      padding: 16px;
+      min-height: 380px;
+      overflow: hidden;
+    }
+    .canvas.with-side {
+      display: grid;
+      grid-template-columns: 1fr 200px;
+      gap: 12px;
+      padding: 14px;
+    }
+    .canvas-area {
+      position: relative;
+      min-height: 360px;
+    }
+
+    /* ===== Node styles ===== */
+    .node {
+      position: absolute;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .node:hover { border-color: #1c1c1c66; }
+    .node.active { border-color: var(--text); z-index: 2; }
+    .node .badge {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 8.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-bottom: 5px;
+    }
+    .node .title {
+      font-size: 12.5px;
+      font-weight: 500;
+      line-height: 1.3;
+      margin: 0;
+      letter-spacing: -0.005em;
+    }
+    .node.active .title { font-style: italic; }
+    .node .desc {
+      font-size: 10.5px;
+      color: var(--text-soft);
+      line-height: 1.5;
+      margin: 7px 0 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .node .file {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9px;
+      color: var(--text-faint);
+      margin-top: 6px;
+    }
+    .node.lean { width: 178px; min-height: 60px; }
+    .node.full { width: 240px; min-height: 108px; }
+    .node.tiny { width: 132px; min-height: 44px; padding: 7px 9px; }
+    .node.tiny .title { font-size: 11px; }
+
+    /* Cluster card (Dir 3) */
+    .cluster {
+      position: absolute;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      width: 200px;
+    }
+    .cluster .label {
+      font-size: 8.5px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 5px;
+    }
+    .cluster .child {
+      font-size: 11px;
+      padding: 3px 0;
+      border-bottom: 1px dotted var(--line);
+    }
+    .cluster .child:last-child { border-bottom: 0; }
+
+    /* Detail panel (Dir 1) */
+    .detail-panel {
+      background: var(--bg);
+      border: 1px solid var(--line-strong);
+      padding: 14px;
+      font-size: 11px;
+    }
+    .detail-panel h3 {
+      font-family: "Playfair Display", Georgia, serif;
+      font-size: 16px;
+      font-weight: 500;
+      margin: 8px 0 8px;
+    }
+    .detail-panel .section-badge {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 8.5px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+    .detail-panel p {
+      color: var(--text-soft);
+      margin: 0 0 8px;
+    }
+    .detail-panel .hint {
+      color: var(--text);
+      font-style: italic;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+      margin-top: 10px;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10.5px;
+      color: var(--text-soft);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle {
+      display: inline-block;
+      width: 28px;
+      height: 14px;
+      background: #1c1c1c25;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .toggle::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: var(--bg);
+      top: 2px;
+      left: 2px;
+      transition: left 0.15s;
+    }
+    .toggle.on { background: var(--text); }
+    .toggle.on::after { left: 16px; }
+    .view-switch {
+      display: flex;
+      border: 1px solid var(--line-strong);
+    }
+    .view-switch span {
+      padding: 4px 14px;
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      cursor: pointer;
+      user-select: none;
+    }
+    .view-switch span.active {
+      background: var(--text);
+      color: var(--bg);
+    }
+
+    /* Misc */
+    .zoom-tag {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9px;
+      color: var(--text-soft);
+      background: var(--bg);
+      padding: 3px 8px;
+      border: 1px solid var(--line);
+    }
+    .popover {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      background: var(--bg);
+      border: 1px solid var(--text);
+      padding: 10px 12px;
+      width: 240px;
+      font-size: 10.5px;
+      color: var(--text-soft);
+      line-height: 1.5;
+      z-index: 3;
+    }
+    .more-btn {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      width: 16px;
+      height: 16px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      font-size: 11px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-soft);
+      font-family: "JetBrains Mono", monospace;
+    }
+    .more-btn:hover { border-color: var(--text); color: var(--text); }
+
+    /* Legend / observation box */
+    .legend {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: #1c1c1c05;
+      border-left: 2px solid var(--text);
+    }
+    .legend h4 {
+      font-family: "Playfair Display", Georgia, serif;
+      font-size: 14px;
+      font-weight: 500;
+      margin: 0 0 6px;
+    }
+    .legend ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-soft);
+      font-size: 11.5px;
+    }
+    .legend li { margin-bottom: 3px; }
+    .legend li b { color: var(--text); font-weight: 500; }
+
+    /* Fake edges */
+    .edge {
+      position: absolute;
+      pointer-events: none;
+      z-index: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <h1>图谱密度优化 · 方向对比</h1>
+      <p>
+        测试样本: 一篇 9 节点的虚构论文「Knowledge Graph Embedding for
+        Recommendation Systems」。同一份内容, 4 种渲染方式。
+        所有视觉严格沿用 <code>ui-design.md</code> 的 Editorial 规范(暖米色 / 无圆角 / 无阴影 / 衬线+无衬线混排)。
+      </p>
+      <div class="meta">SmartReader · Internal · 2026-06-23</div>
+    </header>
+
+    <div class="grid">
+      <!-- ============== Panel 1: Current ============== -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>当前实现</h2>
+          <span class="tag">Baseline</span>
+        </div>
+        <div class="canvas">
+          <!-- 9 full cards, hand-placed to simulate dagre TB layout -->
+          <div class="node full" style="left: 20px; top: 18px;">
+            <div class="badge">Introduction</div>
+            <h3 class="title">研究背景与动机</h3>
+            <p class="desc">推荐系统面临数据稀疏与冷启动挑战。知识图谱提供丰富的实体关系, 可作为辅助信号引入。</p>
+          </div>
+          <div class="node full" style="left: 290px; top: 18px;">
+            <div class="badge">Background</div>
+            <h3 class="title">知识图谱基础</h3>
+            <p class="desc">KGs 是由 (h, r, t) 三元组构成的有向图。嵌入方法将实体与关系映射到连续向量空间。</p>
+          </div>
+          <div class="node full" style="left: 560px; top: 18px;">
+            <div class="badge">Method</div>
+            <h3 class="title">问题形式化</h3>
+            <p class="desc">将推荐任务建模为 KGE 中的实体预测。给定用户与物品, 预测缺失的关系三元组。</p>
+          </div>
+          <div class="node full" style="left: 20px; top: 175px;">
+            <div class="badge">Method</div>
+            <h3 class="title">TransE 模型</h3>
+            <p class="desc">平移距离模型: h + r ≈ t。结构简单, 适合 1-to-1 关系, 难以建模复杂模式。</p>
+          </div>
+          <div class="node full" style="left: 290px; top: 175px;">
+            <div class="badge">Method</div>
+            <h3 class="title">RotatE 模型</h3>
+            <p class="desc">复数空间旋转: t = h ∘ r。能建模对称 / 反对称 / 组合等关系, 表现更强。</p>
+          </div>
+          <div class="node full" style="left: 560px; top: 175px;">
+            <div class="badge">Related</div>
+            <h3 class="title">已有 KGE 方法</h3>
+            <p class="desc">TransE / TransH / TransR / DistMult / ComplEx。本文聚焦 TransE 与 RotatE 两个代表。</p>
+          </div>
+          <div class="node full" style="left: 155px; top: 332px;">
+            <div class="badge">Experiment</div>
+            <h3 class="title">实验设置</h3>
+            <p class="desc">数据集: MovieLens-1M, Yelp, Amazon-Book。评估指标: Recall@K, NDCG@K。</p>
+          </div>
+          <div class="node full" style="left: 425px; top: 332px;">
+            <div class="badge">Result</div>
+            <h3 class="title">实验结果</h3>
+            <p class="desc">RotatE 在三数据集上平均提升 Recall@20 约 10%, 显著优于 TransE 与其他基线。</p>
+          </div>
+          <div class="node full" style="left: 290px; top: 489px;">
+            <div class="badge">Conclusion</div>
+            <h3 class="title">结论与展望</h3>
+            <p class="desc">旋转式嵌入是当前推荐场景下最有效的 KGE 范式。未来可结合图神经网络进一步提升。</p>
+          </div>
+          <div class="zoom-tag">9 nodes · ~830 × 640 px</div>
+        </div>
+        <div class="legend">
+          <h4>观察</h4>
+          <ul>
+            <li>9 张卡片已经占据 ~830 × 640 px 画布, 视觉开始拥挤</li>
+            <li>每张 description(4 行)占用 60-70% 视觉空间, 是主要"视觉噪声"</li>
+            <li>用户必须读完整张卡片才能判断节点重要性, <b>无法快速识别"主线"</b></li>
+            <li>若达到 20 节点上限, 画布需要 ~1600+ px 才能勉强铺开</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ============== Panel 2: Direction 1 ============== -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>方向 1 · Lean Card + 详情侧栏</h2>
+          <span class="tag">推荐 · 低成本</span>
+        </div>
+        <div class="toolbar">
+          <label>
+            <span class="toggle" id="toggle1"></span>
+            <span>Show details on cards</span>
+          </label>
+        </div>
+        <div class="canvas with-side">
+          <div class="canvas-area">
+            <div class="node lean" style="left: 0; top: 0;">
+              <div class="badge">Introduction</div>
+              <h3 class="title">研究背景与动机</h3>
+            </div>
+            <div class="node lean" style="left: 200px; top: 0;">
+              <div class="badge">Background</div>
+              <h3 class="title">知识图谱基础</h3>
+            </div>
+            <div class="node lean active" style="left: 400px; top: 0;">
+              <div class="badge">Method</div>
+              <h3 class="title">问题形式化</h3>
+              <div class="more-btn" onclick="togglePopover(event)">+</div>
+            </div>
+            <div class="node lean" style="left: 0; top: 80px;">
+              <div class="badge">Method</div>
+              <h3 class="title">TransE 模型</h3>
+            </div>
+            <div class="node lean" style="left: 200px; top: 80px;">
+              <div class="badge">Method</div>
+              <h3 class="title">RotatE 模型</h3>
+            </div>
+            <div class="node lean" style="left: 400px; top: 80px;">
+              <div class="badge">Related</div>
+              <h3 class="title">已有 KGE 方法</h3>
+            </div>
+            <div class="node lean" style="left: 100px; top: 160px;">
+              <div class="badge">Experiment</div>
+              <h3 class="title">实验设置</h3>
+            </div>
+            <div class="node lean" style="left: 300px; top: 160px;">
+              <div class="badge">Result</div>
+              <h3 class="title">实验结果</h3>
+            </div>
+            <div class="node lean" style="left: 200px; top: 240px;">
+              <div class="badge">Conclusion</div>
+              <h3 class="title">结论与展望</h3>
+            </div>
+            <div class="zoom-tag">~33% 更小画布</div>
+          </div>
+          <div class="detail-panel">
+            <div class="section-badge">Method</div>
+            <h3>问题形式化</h3>
+            <p>将推荐任务建模为 KGE 中的实体预测。给定用户与物品, 预测缺失的关系三元组。</p>
+            <p class="hint">▸ 点击其他节点, 侧栏同步切换</p>
+          </div>
+        </div>
+        <div class="legend">
+          <h4>观察</h4>
+          <ul>
+            <li>9 张卡片总宽度从 830px → 580px, 缩减 <b>~33%</b></li>
+            <li>扫一眼就能看清结构, 详细解释在侧栏(已存在的 <code>ExplanationPanel</code>)</li>
+            <li>开关 <code>Show details on cards</code> 保留传统模式, <b>完全 backward-compat</b></li>
+            <li>20 节点仍可铺开, 但 50+ 建议叠加方向 3 的聚类</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ============== Panel 3: Direction 2 ============== -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>方向 2 · Zoom-based LOD</h2>
+          <span class="tag">自动 · 中成本</span>
+        </div>
+        <div class="canvas" style="min-height: 480px;">
+          <div style="font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-soft); margin-bottom: 6px;">Zoom 0.3× · 仅标题</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px;">
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">研究背景与动机</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">知识图谱基础</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">问题形式化</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">TransE 模型</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">RotatE 模型</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">已有 KGE 方法</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">实验设置</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">实验结果</span>
+            <span style="background: var(--bg); border: 1px solid var(--line); padding: 4px 10px; font-size: 10.5px;">结论与展望</span>
+          </div>
+
+          <div style="font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-soft); margin-bottom: 6px;">Zoom 0.7× · 标题 + 1 行描述</div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 22px;">
+            <div style="background: var(--bg); border: 1px solid var(--line); padding: 8px 10px;">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.15em;">Introduction</div>
+              <div style="font-size: 12px; margin-top: 4px;">研究背景与动机</div>
+              <div style="font-size: 10px; color: var(--text-soft); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">推荐系统面临数据稀疏挑战…</div>
+            </div>
+            <div style="background: var(--bg); border: 1px solid var(--line); padding: 8px 10px;">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.15em;">Method</div>
+              <div style="font-size: 12px; margin-top: 4px;">TransE 模型</div>
+              <div style="font-size: 10px; color: var(--text-soft); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">平移距离模型 h+r≈t…</div>
+            </div>
+            <div style="background: var(--bg); border: 1px solid var(--line); padding: 8px 10px;">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.15em;">Result</div>
+              <div style="font-size: 12px; margin-top: 4px;">实验结果</div>
+              <div style="font-size: 10px; color: var(--text-soft); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">RotatE 提升 Recall@20…</div>
+            </div>
+          </div>
+
+          <div style="font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-soft); margin-bottom: 6px;">Zoom 1.2× · 完整卡片</div>
+          <div style="display: flex; gap: 8px;">
+            <div class="node full" style="position: relative; left: 0; top: 0;">
+              <div class="badge">Method</div>
+              <h3 class="title">RotatE 模型</h3>
+              <p class="desc">复数空间旋转: t = h ∘ r。能建模对称 / 反对称 / 组合等关系, 表现更强。</p>
+            </div>
+          </div>
+          <div class="zoom-tag">同一图, 三种密度</div>
+        </div>
+        <div class="legend">
+          <h4>观察</h4>
+          <ul>
+            <li>完全靠 React Flow zoom 驱动, 代码改动量小</li>
+            <li>但 <b>0.5× → 0.7× 临界点文字会"跳变"</b>, 视觉违和感强</li>
+            <li>用户没有"我要看全貌"的主动权, zoom 经常被无意滚动</li>
+            <li>Editorial 强调"静态排版", 这种动态变化可能冲突</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ============== Panel 4: Direction 3 ============== -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>方向 3 · Overview ↔ Detail</h2>
+          <span class="tag">高投入 · 高收益</span>
+        </div>
+        <div class="toolbar">
+          <div class="view-switch" id="vs3">
+            <span class="active">Overview</span>
+            <span>Detail</span>
+          </div>
+        </div>
+        <div class="canvas" style="min-height: 480px;">
+          <div style="font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-soft); margin-bottom: 12px;">Overview · 4 个 section 聚合</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="cluster" style="position: relative;">
+              <div class="label">Background · 3 节点</div>
+              <div class="child">研究背景与动机</div>
+              <div class="child">知识图谱基础</div>
+              <div class="child">已有 KGE 方法</div>
+            </div>
+            <div class="cluster" style="position: relative;">
+              <div class="label">Method · 3 节点</div>
+              <div class="child">问题形式化</div>
+              <div class="child">TransE 模型</div>
+              <div class="child">RotatE 模型</div>
+            </div>
+            <div class="cluster" style="position: relative;">
+              <div class="label">Experiment · 1 节点</div>
+              <div class="child">实验设置</div>
+            </div>
+            <div class="cluster" style="position: relative;">
+              <div class="label">Result · 2 节点</div>
+              <div class="child">实验结果</div>
+              <div class="child">结论与展望</div>
+            </div>
+          </div>
+          <div style="margin-top: 16px; padding: 12px 14px; background: #1c1c1c05; border-left: 2px solid var(--text); font-size: 11px; color: var(--text-soft);">
+            <b style="color: var(--text);">▸ 点击任意 cluster</b> 展开为 Detail 视图, 仅显示该 section 的节点
+          </div>
+          <div class="zoom-tag">9 → 4 卡片</div>
+        </div>
+        <div class="legend">
+          <h4>观察</h4>
+          <ul>
+            <li>9 节点 → 4 cluster, 画布密度立刻下降 <b>~60%</b></li>
+            <li>「地图 ↔ 卫星图」的心智模型最清晰, 用户控制感最强</li>
+            <li>代价: 需要 cluster 数据结构、与 Sidebar 大纲同步、新组件</li>
+            <li>实际等同于 <b>方向 1 + 子图折叠</b>, 已触碰 Schema 层 (B 杠杆点)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Toggle for Direction 1
+    const toggle = document.getElementById("toggle1");
+    if (toggle) {
+      toggle.addEventListener("click", () => toggle.classList.toggle("on"));
+    }
+
+    // View switch for Direction 3 (visual only in mockup)
+    document.querySelectorAll(".view-switch").forEach((sw) => {
+      sw.querySelectorAll("span").forEach((s) => {
+        s.addEventListener("click", () => {
+          sw.querySelectorAll("span").forEach((x) => x.classList.remove("active"));
+          s.classList.add("active");
+        });
+      });
+    });
+
+    // Popover for Direction 1
+    function togglePopover(e) {
+      e.stopPropagation();
+      const node = e.target.closest(".node");
+      const existing = node.querySelector(".popover");
+      document.querySelectorAll(".popover").forEach((p) => p.remove());
+      if (existing) return;
+      const pop = document.createElement("div");
+      pop.className = "popover";
+      pop.innerHTML = "将推荐任务建模为 KGE 中的实体预测。给定用户与物品, 预测缺失的关系三元组。";
+      node.appendChild(pop);
+    }
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".popover").forEach((p) => p.remove());
+    });
+  </script>
+</body>
+</html>
