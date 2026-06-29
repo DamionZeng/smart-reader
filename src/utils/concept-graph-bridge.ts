@@ -1,5 +1,5 @@
 /**
- * Bridge layer: convert a ConceptGraph (from the 7-step knowledge-graph
+ * Bridge layer: convert a ConceptGraph (from the 3-step knowledge-graph
  * pipeline) into a ParsedDocument (the shape board/codeboard expects).
  *
  * This lets board/codeboard render concept-co-occurrence networks on
@@ -131,6 +131,10 @@ export function conceptGraphToParsedDocument(graph: ConceptGraph): ParsedDocumen
     metadata: graph.metadata,
     nodes,
     edges,
+    // LLM 整理的章节大纲（用于侧栏 outline 与思维导图视图）
+    sections: graph.sections,
+    // LLM 抽取的论证骨架（用于论证骨架图视图）
+    skeleton: graph.skeleton,
     // Clusters attached for legend rendering (non-standard field, but
     // ParsedDocument is a loose interface and board pages read this).
     clusters: graph.clusters,

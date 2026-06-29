@@ -50,24 +50,27 @@ interface IngestionProps {
 /**
  * Map the backend KG pipeline step name to the IngestionFlow sub-step key.
  *
- * Returns the explicit sub-step key when we know it. The "queued" step
- * is mapped to the first sub-step ("extractText") so the indicator is
- * stable while we wait for the pipeline to start — falling through to
- * `undefined` here would previously cause IngestionFlow's fallback
- * timer to cycle through all 7 sub-steps.
+ * v3 重构后管线只有 3 步：
+ *   - "extracting-concepts" → extractConcepts（步骤 1：AI 概念抽取 + 句子分割）
+ *   - "building-graph"      → buildGraph（步骤 2：本地构建图谱）
+ *   - "enriching"           → enrich（步骤 3：并行 AI 富化 + 思维导图 + 论证骨架）
+ *
+ * 旧步骤名（resolving-entities, building-edges 等）已合并，不再单独发射。
+ * 代码管线的步骤名（detecting-communities, enriching-concepts）映射到对应的新 key。
  */
 function mapProgressStep(step?: string): string | undefined {
   const map: Record<string, string> = {
-    "extracting-text": "extractText",
-    "splitting-sentences": "splitSentences",
     "extracting-concepts": "extractConcepts",
-    "resolving-entities": "resolveEntities",
-    "building-edges": "buildEdges",
-    "detecting-communities": "detectClusters",
-    "enriching-concepts": "enrichConcepts",
+    "resolving-entities": "buildGraph",
+    "building-edges": "buildGraph",
+    "building-graph": "buildGraph",
+    "detecting-communities": "buildGraph",
+    "enriching": "enrich",
+    "enriching-concepts": "enrich",
+    "finalizing": "enrich",
   };
-  if (!step) return "extractText";
-  if (step === "queued") return "extractText";
+  if (!step) return "extractConcepts";
+  if (step === "queued") return "extractConcepts";
   return map[step];
 }
 

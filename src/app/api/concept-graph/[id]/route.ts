@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { enforceRateLimit, getRateLimitKey, RATE_LIMITS } from "@/lib/rate-limit";
-import type { ConceptGraph } from "@/types/concept-graph";
+import type { ConceptGraph, DocumentSection, ArgumentSkeleton } from "@/types/concept-graph";
 import type { PaperMetadata } from "@/types";
 
 interface RouteContext {
@@ -17,6 +17,7 @@ const MAX_EDGES = 3000;
 
 /**
  * Maps a concept_graphs DB row to the ConceptGraph shape returned to clients.
+ * 包含 sections（思维导图）和 skeleton（论证骨架）字段。
  */
 function toConceptGraph(row: typeof conceptGraphs.$inferSelect): ConceptGraph {
   let metadata: PaperMetadata | undefined;
@@ -47,6 +48,9 @@ function toConceptGraph(row: typeof conceptGraphs.$inferSelect): ConceptGraph {
     edges: row.edges as ConceptGraph["edges"],
     clusters: row.clusters as ConceptGraph["clusters"],
     createdAt: row.createdAt.toISOString(),
+    // 从 DB 读取思维导图和论证骨架数据（可能为 null）
+    ...(row.sections ? { sections: row.sections as DocumentSection[] } : {}),
+    ...(row.skeleton ? { skeleton: row.skeleton as ArgumentSkeleton } : {}),
     ...(metadata ? { metadata } : {}),
   };
 }

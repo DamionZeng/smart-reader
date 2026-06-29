@@ -9,7 +9,7 @@ import { trackUsage } from "@/app/api/usage/track";
 import { getLanguageInstructionForUser } from "@/lib/ai-settings";
 import { detectCommunities } from "@/lib/graph/leiden";
 import { nameClusters } from "@/lib/graph/cluster-name";
-import type { ConceptGraph } from "@/types/concept-graph";
+import type { ConceptGraph, DocumentSection, ArgumentSkeleton } from "@/types/concept-graph";
 import type { PaperMetadata } from "@/types";
 
 interface RouteContext {
@@ -45,6 +45,8 @@ function toConceptGraph(row: typeof conceptGraphs.$inferSelect): ConceptGraph {
     edges: row.edges as ConceptGraph["edges"],
     clusters: row.clusters as ConceptGraph["clusters"],
     createdAt: row.createdAt.toISOString(),
+    ...(row.sections ? { sections: row.sections as DocumentSection[] } : {}),
+    ...(row.skeleton ? { skeleton: row.skeleton as ArgumentSkeleton } : {}),
     ...(metadata ? { metadata } : {}),
   };
 }

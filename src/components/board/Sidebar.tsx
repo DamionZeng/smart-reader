@@ -1,8 +1,9 @@
 "use client";
 
-import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DocumentNode, ParsedDocument } from "@/types";
+import type { DocumentSection } from "@/types/concept-graph";
 import {
   AlignLeft,
   Search,
@@ -55,6 +56,8 @@ interface SidebarProps {
   onImportJson?: (file: File) => void;
   /** Export the graph in the specified format */
   onExport: (format: ExportFormat) => void;
+  /** 跳转到原文锚点（用于章节大纲点击跳转） */
+  onJumpToAnchor?: (anchor: string) => void;
 }
 
 export function Sidebar({
@@ -72,11 +75,14 @@ export function Sidebar({
   onImport,
   onImportJson,
   onExport,
+  onJumpToAnchor,
 }: SidebarProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  // 章节大纲折叠状态：存被折叠的 section id 集合（默认全部展开）
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const exportRef = useRef<HTMLDivElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -272,6 +278,46 @@ export function Sidebar({
       return haystack.includes(q);
     });
   }, [uniqueNodes, deferredQuery]);
+
+  // 章节大纲：按搜索词过滤 sections（标题 + 摘要，含子章节）
+  const sections = document.sections;
+  const filteredSections = useMemo(() => {
+    if (!sections || sections.length === 0) return [];
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return sections;
+    return sections.filter((s) => {
+      const topHit =
+        s.title.toLowerCase().includes(q) ||
+        (s.summary || "").toLowerCase().includes(q);
+      if (topHit) return true;
+      return (s.children || []).some(
+        (c) =>
+          c.title.toLowerCase().includes(q) ||
+          (c.summary || "").toLowerCase().includes(q)
+      );
+    });
+  }, [sections, deferredQuery]);
+
+  const toggleSection = useCallback((id: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 点击章节标题：优先用 anchor 跳转原文，否则选中首个关联概念
+  const handleSectionClick = useCallback(
+    (section: DocumentSection) => {
+      if (section.anchor && onJumpToAnchor) {
+        onJumpToAnchor(section.anchor);
+      } else if (section.conceptIds.length > 0) {
+        onSelectNode(section.conceptIds[0]);
+      }
+    },
+    [onJumpToAnchor, onSelectNode]
+  );
 
   // Highlight matching text
   const highlightMatch = (text: string, query: string) => {
@@ -530,15 +576,89 @@ export function Sidebar({
             <div className="text-[10px] text-[#1C1C1C]/60 uppercase font-sans tracking-[0.2em] mb-6">
               {t("board.outline")}
             </div>
-            {uniqueNodes.length === 0 ? (
+            {sections && sections.length > 0 ? (
+              // 章节大纲视图（LLM 整理的逻辑章节树，支持折叠/展开）
+              filteredSections.length === 0 ? (
+                <p className="font-sans text-xs italic text-[#1C1C1C]/40">
+                  {t("board.searchNoResults")}
+                </p>
+              ) : (
+                <nav className="space-y-3">
+                  {filteredSections.map((section, i) => {
+                    const hasChildren =
+                      !!section.children && section.children.length > 0;
+                    const isCollapsed = collapsedSections.has(section.id);
+                    return (
+                      <div key={section.id} className="space-y-1.5">
+                        <div className="flex items-start gap-3">
+                          <span className="text-[10px] font-mono text-[#1C1C1C]/30 mt-1 shrink-0">
+                            {(i + 1).toString().padStart(2, "0")}
+                          </span>
+                          <button
+                            onClick={() => handleSectionClick(section)}
+                            className="flex-1 text-left group focus:outline-none"
+                          >
+                            <span className="block font-serif text-sm leading-snug group-hover:italic text-[#1C1C1C]/80 transition-colors">
+                              {highlightMatch(section.title, deferredQuery)}
+                            </span>
+                            {section.summary && (
+                              <span className="block font-sans text-[11px] text-[#1C1C1C]/50 leading-relaxed mt-0.5 line-clamp-2">
+                                {section.summary}
+                              </span>
+                            )}
+                          </button>
+                          {hasChildren && (
+                            <button
+                              onClick={() => toggleSection(section.id)}
+                              className="text-[#1C1C1C]/40 hover:text-[#1C1C1C] transition-colors p-1 mt-0.5 shrink-0 focus:outline-none"
+                              aria-label={isCollapsed ? "Expand" : "Collapse"}
+                            >
+                              <ChevronDown
+                                className={cn(
+                                  "w-3 h-3 transition-transform duration-200",
+                                  isCollapsed && "-rotate-90"
+                                )}
+                              />
+                            </button>
+                          )}
+                        </div>
+                        {hasChildren && !isCollapsed && (
+                          <div className="ml-7 space-y-1.5 border-l border-[#1C1C1C]/10 pl-3">
+                            {section.children!.map((child) => (
+                              <button
+                                key={child.id}
+                                onClick={() => handleSectionClick(child)}
+                                className="block w-full text-left group focus:outline-none"
+                              >
+                                <span className="block font-sans text-xs leading-snug group-hover:italic text-[#1C1C1C]/60 transition-colors">
+                                  {highlightMatch(child.title, deferredQuery)}
+                                </span>
+                                {child.summary && (
+                                  <span className="block font-sans text-[10px] text-[#1C1C1C]/40 leading-relaxed mt-0.5 line-clamp-1">
+                                    {child.summary}
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </nav>
+              )
+            ) : uniqueNodes.length === 0 ? (
+              // 回退 1：无章节且无 KG 节点
               <p className="font-sans text-xs italic text-[#1C1C1C]/40">
                 {t("board.outlineEmpty")}
               </p>
             ) : filteredNodes.length === 0 ? (
+              // 回退 2：搜索无结果
               <p className="font-sans text-xs italic text-[#1C1C1C]/40">
                 {t("board.searchNoResults")}
               </p>
             ) : (
+              // 回退 3：KG 节点列表
               <nav className="space-y-4">
                 {filteredNodes.map((node, i) => (
                   <button

@@ -49,18 +49,6 @@ const DOC_COLORS = [
   "slate", "rust", "olive", "navy", "plum", "teal", "umber", "moss",
 ];
 
-function sanitizeKey(label: string): string {
-  return (
-    "g-" +
-    label
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "g-unknown"
-  );
-}
-
 export async function GET(request: NextRequest) {
   try {
     const rlKey = getRateLimitKey(request);
@@ -148,17 +136,14 @@ export async function GET(request: NextRequest) {
       });
     });
 
-    // ----- Merge concepts by normalized label -----
-    // Same-label concepts across documents merge into one node.
-    // The merged node's clusterId = the document that had the highest
-    // importance for this concept (so it sits inside that document's
-    // big-circle). Its sourceDocuments list tracks all articles it
-    // appears in (for the click-to-navigate feature).
+    // ----- Build concepts (no cross-document merge — match board's node count) -----
+    // 每个 concept 保持独立节点，id 格式为 `${docId}:${conceptId}`。
+    // 这确保 dashboard 全局视图和 board 单文档视图显示相同的节点数。
+    // 跨文档的概念合并可以后续作为"合并视图"开关再加。
     const mergedConcepts = new Map<
       string,
       Concept & {
         sourceDocuments: Array<{ id: string; title: string }>;
-        // Best (highest-importance) document id — becomes clusterId.
         bestDocId: string;
         bestImportance: number;
       }
@@ -167,8 +152,6 @@ export async function GET(request: NextRequest) {
 
     for (const row of activeRows) {
       const docId = row.documentId ?? row.id;
-      // Skip documents that aren't in our active set (shouldn't happen
-      // since we already sliced, but defensive).
       if (!docClusterMap.has(docId)) continue;
 
       const sourceDoc = {
@@ -178,51 +161,26 @@ export async function GET(request: NextRequest) {
       const concepts = (row.concepts as Concept[]) || [];
       for (const c of concepts) {
         if (!c || typeof c.id !== "string" || typeof c.label !== "string") continue;
-        const key = c.label.trim().toLowerCase();
-        if (!key) continue;
-        const mergedId = sanitizeKey(c.label);
+        const mergedId = `${docId}:${c.id}`;
+        // 同一文档内按 concept id 去重（和 board 一致）
+        if (mergedConcepts.has(mergedId)) continue;
         idRemap.set(`${row.id}:${c.id}`, mergedId);
 
         const importance = c.importance ?? 0;
-        const existing = mergedConcepts.get(key);
-        if (existing) {
-          existing.importance = Math.max(existing.importance, importance);
-          existing.frequency = (existing.frequency ?? 0) + (c.frequency ?? 0);
-          if (!existing.sourceDocuments.some((d) => d.id === sourceDoc.id)) {
-            existing.sourceDocuments.push(sourceDoc);
-          }
-          // Track which document this concept is most prominent in.
-          if (importance > existing.bestImportance) {
-            existing.bestImportance = importance;
-            existing.bestDocId = docId;
-          }
-          if (c.description && c.description.length > (existing.description?.length ?? 0)) {
-            existing.description = c.description;
-          }
-          if (Array.isArray(c.aliases)) {
-            for (const a of c.aliases) {
-              if (a && !existing.aliases.includes(a)) existing.aliases.push(a);
-            }
-          }
-          if (Array.isArray(c.anchors) && c.anchors.length > existing.anchors.length) {
-            existing.anchors = c.anchors;
-          }
-        } else {
-          mergedConcepts.set(key, {
-            id: mergedId,
-            label: c.label,
-            type: c.type ?? "term",
-            aliases: Array.isArray(c.aliases) ? [...c.aliases] : [],
-            frequency: c.frequency ?? 0,
-            importance,
-            clusterId: docId, // tentative; finalised below
-            description: c.description,
-            anchors: Array.isArray(c.anchors) ? [...c.anchors] : [],
-            sourceDocuments: [sourceDoc],
-            bestDocId: docId,
-            bestImportance: importance,
-          });
-        }
+        mergedConcepts.set(mergedId, {
+          id: mergedId,
+          label: c.label,
+          type: c.type ?? "term",
+          aliases: Array.isArray(c.aliases) ? [...c.aliases] : [],
+          frequency: c.frequency ?? 0,
+          importance,
+          clusterId: docId,
+          description: c.description,
+          anchors: Array.isArray(c.anchors) ? [...c.anchors] : [],
+          sourceDocuments: [sourceDoc],
+          bestDocId: docId,
+          bestImportance: importance,
+        });
       }
     }
 

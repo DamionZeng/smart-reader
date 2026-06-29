@@ -11,3 +11,5 @@ coverage/
 .ab/
 .agent-browser/
 .chrome-debug-profile/
+.chrome-profile/
+.test-shots/

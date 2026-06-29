@@ -260,7 +260,14 @@
     "forceClusterPull": "Cluster pull",
     "forceClusterPullHint": "Higher = tighter clusters",
     "attachedImage": "Attached source image",
-    "viewImage": "View image"
+    "viewImage": "View image",
+    "viewGraph": "Knowledge Graph",
+    "viewMindmap": "Mind Map",
+    "viewSkeleton": "Argument Skeleton",
+    "mindmapEmpty": "No section outline yet. Re-import the document to generate one.",
+    "skeletonComingSoon": "Argument skeleton view — coming soon",
+    "sectionSummary": "Summary",
+    "sectionConcepts": "Concepts"
   },
   "user": {
     "signedInAs": "Signed in as",
@@ -429,13 +436,9 @@
       "stage2Done": "Completed",
       "subStepsLabel": "Sub-steps",
       "step1_1": "Fetch and extract source text",
-      "step2_1": "Extract text content",
-      "step2_2": "Split sentences",
-      "step2_3": "Extract concepts (AI)",
-      "step2_4": "Resolve entities",
-      "step2_5": "Build co-occurrence edges",
-      "step2_6": "Detect communities",
-      "step2_7": "Enrich concepts"
+      "step2_1": "Extract concepts (AI)",
+      "step2_2": "Build graph structure",
+      "step2_3": "Generate mind map & argument skeleton"
     }
   },
   "projectType": {

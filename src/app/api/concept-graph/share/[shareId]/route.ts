@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { conceptGraphs } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import type { ConceptGraph } from "@/types/concept-graph";
+import type { ConceptGraph, DocumentSection, ArgumentSkeleton } from "@/types/concept-graph";
 import type { PaperMetadata } from "@/types";
 
 interface RouteContext {
@@ -38,6 +38,8 @@ function toConceptGraph(row: typeof conceptGraphs.$inferSelect): ConceptGraph {
     edges: row.edges as ConceptGraph["edges"],
     clusters: row.clusters as ConceptGraph["clusters"],
     createdAt: row.createdAt.toISOString(),
+    ...(row.sections ? { sections: row.sections as DocumentSection[] } : {}),
+    ...(row.skeleton ? { skeleton: row.skeleton as ArgumentSkeleton } : {}),
     ...(metadata ? { metadata } : {}),
   };
 }

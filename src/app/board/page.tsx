@@ -33,9 +33,12 @@ import { normaliseGraph } from "@/utils/graph-normalize";
 import { exportAndDownload } from "@/utils/export-markdown";
 import type { ExportFormat } from "@/utils/export-markdown";
 import { exportGraphAsImage } from "@/utils/export-image";
-import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, simpleForceDirectedLayout, filterIsolatedNodes, markMainNode, type LayoutTemplate, type ForceParams, DEFAULT_FORCE_PARAMS } from "@/utils/auto-layout";
+import { simpleForceDirectedLayout, filterIsolatedNodes, markMainNode } from "@/utils/auto-layout";
 import { pickFirstString } from "@/utils/string";
 import { buildEdge } from "@/utils/edge-style";
+import { cn } from "@/utils/cn";
+import type { DocumentSection, ArgumentSkeleton } from "@/types/concept-graph";
+import { EditableMarkmap } from "@/components/board/EditableMarkmap";
 import {
   getProject,
   saveProject,
@@ -54,12 +57,10 @@ import { AIErrorBoundary } from "@/components/errors/AIErrorBoundary";
 import { HistoryPanel } from "@/components/board/HistoryPanel";
 import { EdgeEditorModal } from "@/components/board/EdgeEditorModal";
 import { EdgeTypeLegend } from "@/components/board/EdgeTypeLegend";
-import { LayoutMenu } from "@/components/board/LayoutMenu";
-import { ForceSettingsPanel } from "@/components/board/ForceSettingsPanel";
 import { createVersion } from "@/api/versions";
 import { conceptGraphToParsedDocument } from "@/utils/concept-graph-bridge";
 import type { ConceptGraph, Concept, ConceptEdge, ConceptCluster } from "@/types/concept-graph";
-import { ArrowRight, Undo2, Redo2, FileText, MessageCircle, Image as ImageIcon, History as HistoryIcon, Network } from "lucide-react";
+import { Undo2, Redo2, FileText, MessageCircle, Image as ImageIcon, History as HistoryIcon, ChevronDown } from "lucide-react";
 
 const nodeTypes = {
   concept: ConceptNode,
@@ -104,6 +105,200 @@ function maybeSnapshotVersion(
   });
 }
 
+// 视图模式：graph = 知识图谱 / mindmap = 思维导图（章节树）/ skeleton = 论证骨架图（待实现）
+type ViewMode = "graph" | "mindmap" | "skeleton";
+
+
+// 论证骨架图节点类型样式配置
+const SKELETON_NODE_STYLES: Record<string, { label: string; color: string; bg: string }> = {
+  claim: { label: "Claim", color: "#1C1C1C", bg: "#1C1C1C" },
+  evidence: { label: "Evidence", color: "#1C1C1C", bg: "#1C1C1C]/40" },
+  counter: { label: "Counter", color: "#991B1B", bg: "#991B1B" },
+  limitation: { label: "Limitation", color: "#991B1B", bg: "#991B1B" },
+  method: { label: "Method", color: "#1C1C1C", bg: "#1C1C1C]/60" },
+  result: { label: "Result", color: "#1C1C1C", bg: "#1C1C1C]/60" },
+};
+
+const SKELETON_RELATION_STYLES: Record<string, { label: string; symbol: string }> = {
+  supports: { label: "supports", symbol: "→" },
+  evidence: { label: "evidence for", symbol: "⇒" },
+  opposes: { label: "opposes", symbol: "⊥" },
+  extends: { label: "extends", symbol: "↗" },
+  limitation: { label: "limitation of", symbol: "⚠" },
+};
+
+/**
+ * Argument Skeleton 视图：渲染 LLM 抽取的论断-证据-反例结构。
+ * 与知识图谱（实体-关系）不同，这里显示的是"作者在论证什么"。
+ * 核心论断（mainClaim）置顶并加粗，其他节点按类型分组展示。
+ */
+function ArgumentSkeletonView({
+  skeleton,
+  onJumpToAnchor,
+}: {
+  skeleton?: ArgumentSkeleton;
+  onJumpToAnchor: (anchor: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  if (!skeleton || skeleton.nodes.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-12 bg-[#F9F8F6]">
+        <p className="font-sans text-sm italic text-[#1C1C1C]/40">
+          {t("board.skeletonComingSoon")}
+        </p>
+      </div>
+    );
+  }
+
+  const { nodes, links, mainClaimId } = skeleton;
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  // 构建邻接表：每个节点的入边和出边
+  const outgoing = new Map<string, typeof links>();
+  const incoming = new Map<string, typeof links>();
+  for (const n of nodes) {
+    outgoing.set(n.id, []);
+    incoming.set(n.id, []);
+  }
+  for (const link of links) {
+    outgoing.get(link.source)?.push(link);
+    incoming.get(link.target)?.push(link);
+  }
+
+  const mainClaim = mainClaimId ? nodeById.get(mainClaimId) : null;
+  const otherNodes = nodes.filter((n) => n.id !== mainClaimId);
+
+  // 渲染单个论断节点
+  const renderNode = (node: typeof nodes[number], isMain = false) => {
+    const style = SKELETON_NODE_STYLES[node.type] || SKELETON_NODE_STYLES.claim;
+    const outLinks = outgoing.get(node.id) || [];
+    const inLinks = incoming.get(node.id) || [];
+
+    return (
+      <div
+        key={node.id}
+        className={cn(
+          "border-l-2 pl-4 py-3 transition-colors",
+          isMain ? "border-[#991B1B] bg-[#991B1B]/5" : "border-[#1C1C1C]/20"
+        )}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <span
+            className="font-sans text-[9px] uppercase tracking-[0.2em] px-1.5 py-0.5"
+            style={{ color: style.color, border: `1px solid ${style.color}40` }}
+          >
+            {style.label}
+          </span>
+          {node.section && (
+            <span className="font-sans text-[10px] text-[#1C1C1C]/40 italic">
+              {node.section}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => onJumpToAnchor(node.anchor || node.text)}
+          className={cn(
+            "font-serif tracking-tight text-left hover:italic transition-colors focus:outline-none",
+            isMain ? "text-lg font-medium text-[#1C1C1C]" : "text-base text-[#1C1C1C]/80"
+          )}
+        >
+          {node.text}
+        </button>
+
+        {/* 出边：这个节点支撑/反对/延伸的其他节点 */}
+        {outLinks.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {outLinks.map((link, i) => {
+              const target = nodeById.get(link.target);
+              if (!target) return null;
+              const relStyle = SKELETON_RELATION_STYLES[link.relation] || SKELETON_RELATION_STYLES.supports;
+              return (
+                <div key={i} className="flex items-start gap-2 text-xs font-sans text-[#1C1C1C]/50">
+                  <span className="text-[#1C1C1C]/30 mt-0.5">{relStyle.symbol}</span>
+                  <span>
+                    <span className="italic">{relStyle.label}</span>{" "}
+                    <span className="text-[#1C1C1C]/70">{target.text}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 入边：支撑这个节点的证据 */}
+        {inLinks.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-[#1C1C1C]/5 space-y-1">
+            {inLinks.map((link, i) => {
+              const source = nodeById.get(link.source);
+              if (!source) return null;
+              const relStyle = SKELETON_RELATION_STYLES[link.relation] || SKELETON_RELATION_STYLES.supports;
+              return (
+                <div key={i} className="flex items-start gap-2 text-xs font-sans text-[#1C1C1C]/40">
+                  <span className="text-[#1C1C1C]/20 mt-0.5">←</span>
+                  <span>
+                    <span className="text-[#1C1C1C]/60">{source.text}</span>{" "}
+                    <span className="italic">({relStyle.label})</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 按类型分组非主节点
+  const grouped: Record<string, typeof nodes> = {};
+  for (const n of otherNodes) {
+    if (!grouped[n.type]) grouped[n.type] = [];
+    grouped[n.type].push(n);
+  }
+  const groupOrder = ["claim", "evidence", "method", "result", "counter", "limitation"];
+
+  return (
+    <div className="flex-1 overflow-auto p-12 bg-[#F9F8F6]">
+      <div className="max-w-3xl mx-auto">
+        <h2 className="font-serif tracking-tight text-2xl text-[#1C1C1C] mb-2 pb-4 border-b border-[#1C1C1C]/10">
+          {t("board.viewSkeleton")}
+        </h2>
+        <p className="font-sans text-sm text-[#1C1C1C]/50 mb-8 italic">
+          论断 · 证据 · 局限 —— 作者如何论证
+        </p>
+
+        {/* 核心论断 */}
+        {mainClaim && (
+          <div className="mb-8">
+            <p className="font-sans text-[10px] uppercase tracking-[0.3em] text-[#1C1C1C]/40 mb-3">
+              Main Claim
+            </p>
+            {renderNode(mainClaim, true)}
+          </div>
+        )}
+
+        {/* 按类型分组渲染 */}
+        {groupOrder.map((type) => {
+          const group = grouped[type];
+          if (!group || group.length === 0) return null;
+          const style = SKELETON_NODE_STYLES[type] || SKELETON_NODE_STYLES.claim;
+          return (
+            <div key={type} className="mb-8">
+              <p className="font-sans text-[10px] uppercase tracking-[0.3em] text-[#1C1C1C]/40 mb-3">
+                {style.label}s
+              </p>
+              <div className="space-y-3">
+                {group.map((node) => renderNode(node))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BoardPageInner() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -133,6 +328,8 @@ function BoardPageInner() {
   const [showOriginalText, setShowOriginalText] = useState(false);
   const [showQA, setShowQA] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // 视图模式：graph = 知识图谱（默认）/ mindmap = 思维导图 / skeleton = 论证骨架图
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
   // P0: Obsidian-style hover neighbor highlight. `hoveredNodeId` is the
   // node currently under the cursor; we compute its neighbor ids from
   // `edges` and inject `isHoverNeighbor` / `isFaded` into node data.
@@ -149,13 +346,6 @@ function BoardPageInner() {
   // count as "dirty" for the sidebar button).
   const [hasTitleChanges, setHasTitleChanges] = useState(false);
 
-  // Knowledge-graph pipeline state. This powers the "Re-generate KG"
-  // button in the toolbar; the import flow itself lives at /import and
-  // is no longer driven by this page.
-  const [isGeneratingKG, setIsGeneratingKG] = useState(false);
-  const [kgJobId, setKgJobId] = useState<string | null>(null);
-  const [kgProgress, setKgProgress] = useState<{ step: string; current: number; total: number } | null>(null);
-  const [kgError, setKgError] = useState<string | null>(null);
   const [clusterLegend, setClusterLegend] = useState<{ id: string; label: string; color: string; count: number }[]>([]);
 
   // 当前加载的知识图谱 ID（用于保存到 conceptGraphs 表）
@@ -171,10 +361,6 @@ function BoardPageInner() {
   // a user clicks a row in the legend.
   const [hiddenClusterIds, setHiddenClusterIds] = useState<Set<string>>(new Set());
   const [clusterCenters, setClusterCenters] = useState<Record<string, { x: number; y: number }>>({});
-  // P1-2: user-tunable d3-force parameters. Persisted in component state
-  // only (not the DB) — they're a per-session view tweak. Re-running the
-  // layout when they change is handled by `handleApplyForceParams`.
-  const [forceParams, setForceParams] = useState<ForceParams>({ ...DEFAULT_FORCE_PARAMS });
   // P2-1: cluster focus mode. When set, the corresponding cluster-group
   // node is highlighted and non-member concept nodes are faded. Clicking
   // the cluster-group node again, pressing Escape, or clicking empty
@@ -690,9 +876,8 @@ function BoardPageInner() {
           setEdges([]);
           initialNodesRef.current = [];
           initialEdgesRef.current = [];
-          // Fire-and-forget: the polling effect will populate the
-          // canvas when the pipeline finishes.
-          handleGenerateKnowledgeGraph();
+          // No KG exists. The user can re-trigger generation from the
+          // /import page via the sidebar's Import button.
         }
         // Skip the first auto-save that fires from re-mounting state.
         skipNextSaveRef.current = true;
@@ -985,205 +1170,6 @@ function BoardPageInner() {
     }
   }, [setNodes, setEdges]);
 
-  // ----- Knowledge-graph generation -----
-  // Triggers the 7-step concept-graph pipeline (async job), polls for
-  // completion, then replaces the canvas with the concept-co-occurrence
-  // network rendered with force-directed layout + cluster colors.
-  const handleGenerateKnowledgeGraph = useCallback(async () => {
-    const id = projectIdRef.current;
-    if (!id) return;
-    setIsGeneratingKG(true);
-    setKgError(null);
-    setKgProgress({ step: "queued", current: 0, total: 7 });
-    try {
-      // Trigger the pipeline via the concept-graph ingest API.
-      // We pass the existing project's rawText by re-using the file/URL
-      // the user originally submitted. Since we don't have the original
-      // file handy, we send the project id and let the API fetch rawText
-      // from the documents table.
-      const resp = await fetch("/api/concept-graph/ingest", {
-        method: "POST",
-        body: (() => {
-          const fd = new FormData();
-          fd.append("type", "paper");
-          fd.append("projectId", id);
-          return fd;
-        })(),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to start pipeline (${resp.status})`);
-      }
-      const { jobId } = await resp.json();
-      if (!jobId) throw new Error("No job id returned");
-      setKgJobId(jobId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate knowledge graph";
-      setKgError(msg);
-      setIsGeneratingKG(false);
-      setKgProgress(null);
-    }
-  }, []);
-
-  // Poll the KG job status until done/failed
-  useEffect(() => {
-    if (!kgJobId) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const r = await fetch(`/api/concept-graph/jobs/${kgJobId}`);
-        if (!r.ok) throw new Error(`Job poll failed (${r.status})`);
-        const job = await r.json();
-        if (cancelled) return;
-        setKgProgress(job.progress);
-        if (job.status === "done" && job.graphId) {
-          // Fetch the generated concept graph
-          const gr = await fetch(`/api/concept-graph/${job.graphId}`);
-          if (!gr.ok) throw new Error("Failed to fetch generated graph");
-          const { graph } = await gr.json();
-          const conceptGraph = graph as ConceptGraph;
-          // Bridge to ParsedDocument
-          const parsed = conceptGraphToParsedDocument(conceptGraph);
-          if (parsed.nodes.length === 0) {
-            throw new Error("Knowledge graph generated 0 concepts. The source text may be too short or the LLM failed to extract concepts.");
-          }
-          setDocumentContent(parsed);
-          setClusterLegend(
-            (parsed as ParsedDocument & { clusters?: { id: string; label: string; colorName: string; conceptIds: string[] }[] })
-              .clusters?.map((c) => ({
-                id: c.id,
-                label: c.label || c.id,
-                color: ["slate","rust","olive","navy","plum","teal","umber","moss"].includes(c.colorName)
-                  ? { slate:"#1C1C1C", rust:"#A0522D", olive:"#6B8E23", navy:"#1C2B4B", plum:"#5D3A5D", teal:"#2F5D5D", umber:"#6B4226", moss:"#4A5D23" }[c.colorName] || "#1C1C1C"
-                  : "#1C1C1C",
-                count: c.conceptIds.length,
-              })) || []
-          );
-          // Track the KG id + clusters so subsequent edits auto-save
-          // back to the conceptGraphs table.
-          setKgGraphId(job.graphId);
-          kgGraphIdRef.current = job.graphId;
-          kgClustersRef.current = conceptGraph.clusters || [];
-          // Build React Flow nodes with concept-graph type + cluster layout
-          let flowNodes: Node[] = parsed.nodes.map((n) => ({
-            id: n.id,
-            type: "concept-graph" as const,
-            position: n.position,
-            data: { ...n.data, isActive: false },
-          }));
-          // P2-2: staggered entrance animation (same as initial load)
-          const sortedByImportance = [...flowNodes].sort((a, b) => {
-            const ia = ((a.data as Record<string, unknown>)?.importance as number) ?? 0;
-            const ib = ((b.data as Record<string, unknown>)?.importance as number) ?? 0;
-            return ib - ia;
-          });
-          const delayMap = new Map<string, number>();
-          sortedByImportance.forEach((n, i) => {
-            delayMap.set(n.id, Math.min(i * 30, 2000));
-          });
-          flowNodes = flowNodes.map((n) => ({
-            ...n,
-            data: {
-              ...(n.data as Record<string, unknown>),
-              entranceDelay: delayMap.get(n.id) ?? 0,
-            },
-          }));
-          const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          // No cluster layer: filter isolated, mark main, single-stage layout.
-          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
-          const markedNodes = markMainNode(connectedNodes);
-          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges, {
-            width: 1700,
-            height: 1200,
-          });
-          setNodes(positionedNodes);
-          setEdges(connectedEdges);
-          initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = connectedEdges;
-          syncClusterCenters([]);
-          setHiddenClusterIds(new Set());
-          // Fit view after layout so the graph is centered and visible
-          setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
-          // The KG is now the editable surface — do NOT skip auto-save.
-          // Just mark the canvas as clean so the freshly-loaded state
-          // does not trigger an immediate re-save.
-          isCanvasDirtyRef.current = false;
-          setIsGeneratingKG(false);
-          setKgJobId(null);
-          // We are already on /board?id=… — the import flow happens at
-          // /import and navigates here on success. There is no need to
-          // re-issue router.replace; doing so would briefly unmount the
-          // canvas and cause a flash of the LoadingScreen.
-        } else if (job.status === "failed") {
-          throw new Error(job.error || "Pipeline failed");
-        } else if (job.status === "done" && !job.graphId) {
-          // Job marked done but no graph was produced — treat as error
-          // so the user is not left polling forever.
-          throw new Error("Pipeline completed but produced no graph.");
-        }
-      } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "Pipeline error";
-        setKgError(msg);
-        setIsGeneratingKG(false);
-        setKgJobId(null);
-        setKgProgress(null);
-      }
-    };
-    poll();
-    const interval = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [kgJobId, setNodes, setEdges]);
-
-  // ----- Auto-layout: run dagre and update node positions -----
-  const handleAutoLayout = useCallback(() => {
-    commit();
-    const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
-    const laidOut = autoLayout(conceptNodes, edgesRef.current, "TB");
-    setNodes(laidOut);
-    setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-  }, [setNodes, commit, rfInstance]);
-
-  // ----- Apply a named layout template -----
-  const handleApplyTemplate = useCallback((template: LayoutTemplate) => {
-    commit();
-    const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
-    if (template === "force") {
-      const positionedNodes = simpleForceDirectedLayout(
-        conceptNodes,
-        edgesRef.current,
-        { width: 1700, height: 1200, params: forceParams }
-      );
-      setNodes(positionedNodes);
-      setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-    } else {
-      const laidOut = applyLayoutTemplate(conceptNodes, edgesRef.current, template);
-      setNodes(laidOut);
-      setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-    }
-  }, [setNodes, commit, rfInstance, forceParams]);
-
-  // ----- Re-run the force layout with updated parameters -----
-  // Called when the user drags a slider in ForceSettingsPanel. We
-  // rebuild the layout from the current concept nodes + edges and let
-  // the simulation run with the new params. fitView is debounced so
-  // rapid slider drags don't cause visual jitter.
-  const handleApplyForceParams = useCallback((next: ForceParams) => {
-    setForceParams(next);
-    const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
-    if (conceptNodes.length === 0) return;
-    const positionedNodes = simpleForceDirectedLayout(
-      conceptNodes,
-      edgesRef.current,
-      { width: 1700, height: 1200, params: next }
-    );
-    setNodes(positionedNodes);
-    setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 300 }), 60);
-  }, [setNodes, rfInstance]);
-
   // ----- Export the current graph as a PNG image -----
   const handleExportImage = useCallback(async () => {
     try {
@@ -1197,6 +1183,13 @@ function BoardPageInner() {
       alert(t("board.exportImageError"));
     }
   }, [editableTitle, t]);
+
+  // 章节大纲 / 思维导图点击跳转原文：把 anchor 设为高亮文本并打开原文面板。
+  // 这个回调被 Sidebar 和 MindMapView 共用。
+  const handleJumpToAnchor = useCallback((anchor: string) => {
+    setHighlightText(anchor);
+    setShowOriginalText(true);
+  }, []);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent | React.TouchEvent, node: Node) => {
@@ -1456,278 +1449,342 @@ function BoardPageInner() {
         }}
         isSaving={saveStatus === "saving"}
         isDirty={hasTitleChanges}
+        onJumpToAnchor={handleJumpToAnchor}
       />
 
-      <main className="flex-1 relative flex overflow-hidden bg-[#F9F8F6]">
-        {showOriginalText && documentContent?.rawText && (
-          <OriginalTextPanel
-            rawText={documentContent.rawText}
-            highlightText={highlightText}
-            onClose={() => {
-              setShowOriginalText(false);
-              setHighlightText(null);
-            }}
-          />
-        )}
-        {showQA && projectId && (
-          <AIErrorBoundary
-            context="qa"
-            onDismiss={() => setShowQA(false)}
-            onRetry={() => window.location.reload()}
-          >
-            <QAPanel
-              projectId={projectId}
-              onClose={() => setShowQA(false)}
-            />
-          </AIErrorBoundary>
-        )}
-
-        <ReactFlow
-            nodes={visibleNodes}
-            edges={visibleEdges}
-            onNodesChange={handleNodesChange}
-            onEdgesChange={handleEdgesChange}
-            onNodeClick={handleNodeClick}
-            onNodeMouseEnter={handleNodeMouseEnter}
-            onNodeMouseLeave={handleNodeMouseLeave}
-            onEdgeClick={(_evt, edge) => {
-              const de: DocumentEdge = {
-                id: edge.id,
-                source: edge.source,
-                target: edge.target,
-                label: typeof edge.label === "string" ? edge.label : undefined,
-                type: edge.type as string | undefined,
-                edgeType: (edge.data?.edgeType as DocumentEdge["edgeType"]) ?? "relates",
-                note: (edge.data?.note as string) ?? undefined,
-              };
-              setEditingEdge(de);
-            }}
-            onConnect={onConnect}
-            onNodeDragStart={handleNodeDragStart}
-            onDoubleClick={handlePaneDoubleClick}
-            onInit={setRfInstance}
-            deleteKeyCode={null}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            connectionMode={ConnectionMode.Loose}
-            fitView
-            fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
-            minZoom={0.15}
-            className="bg-[#F9F8F6]"
-          >
-            <Background
-              color="#1C1C1C"
-              gap={24}
-              size={1}
-              className="opacity-10"
-            />
-            <Controls
-              className="!bg-[#F9F8F6] !border-[#1C1C1C]/10 !fill-[#1C1C1C] !shadow-none !rounded-none"
-              showInteractive={false}
-              position="top-right"
-            />
-            <Panel position="top-left" className="!mt-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={undo}
-                  disabled={!canUndo}
-                  className="inline-flex items-center justify-center bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-3 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title={t("board.undo")}
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={redo}
-                  disabled={!canRedo}
-                  className="inline-flex items-center justify-center bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-3 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title={t("board.redo")}
-                >
-                  <Redo2 className="w-3.5 h-3.5" />
-                </button>
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <LayoutMenu
-                  disabled={nodes.length === 0}
-                  onAutoLayout={handleAutoLayout}
-                  onApplyTemplate={handleApplyTemplate}
-                />
-                <ForceSettingsPanel
-                  params={forceParams}
-                  onChange={handleApplyForceParams}
-                  disabled={nodes.length === 0}
-                />
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <button
-                  type="button"
-                  onClick={() => setShowOriginalText((v) => !v)}
-                  disabled={!documentContent?.rawText}
-                  className={`inline-flex items-center gap-2 bg-[#F9F8F6] border font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
-                    showOriginalText
-                      ? "border-[#1C1C1C] text-[#1C1C1C]"
-                      : "border-[#1C1C1C]/20 text-[#1C1C1C] hover:border-[#1C1C1C]"
-                  }`}
-                  title={t("board.originalText")}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  {t("board.originalText")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowQA((v) => !v)}
-                  disabled={!projectId}
-                  className={`inline-flex items-center gap-2 bg-[#F9F8F6] border font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
-                    showQA
-                      ? "border-[#1C1C1C] text-[#1C1C1C]"
-                      : "border-[#1C1C1C]/20 text-[#1C1C1C] hover:border-[#1C1C1C]"
-                  }`}
-                  title={t("board.askPaper")}
-                >
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  {t("board.askPaper")}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportImage}
-                  disabled={nodes.length === 0}
-                  className="inline-flex items-center gap-2 bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title={t("board.exportImage")}
-                >
-                  <ImageIcon className="w-3.5 h-3.5" />
-                  {t("board.exportImage")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowHistory(true)}
-                  disabled={!projectId}
-                  className="inline-flex items-center gap-2 bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title={t("history.title")}
-                >
-                  <HistoryIcon className="w-3.5 h-3.5" />
-                  {t("history.title")}
-                </button>
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <button
-                  type="button"
-                  onClick={handleGenerateKnowledgeGraph}
-                  disabled={!projectId || isGeneratingKG}
-                  className="inline-flex items-center gap-2 bg-[#1C1C1C] text-[#F9F8F6] border border-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:bg-transparent hover:text-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title="Generate concept knowledge graph"
-                >
-                  <Network className="w-3.5 h-3.5" />
-                  {isGeneratingKG ? `KG ${kgProgress?.current || 0}/${kgProgress?.total || 7}` : "Knowledge Graph"}
-                </button>
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <SaveIndicator
-                  status={saveStatus}
-                  lastSavedAt={lastSavedAt}
-                  alwaysShow
-                />
-              </div>
-            </Panel>
-            {kgError && (
-              <Panel position="top-center" className="!mt-2">
-                <div className="bg-[#1C1C1C]/5 border border-[#1C1C1C] px-4 py-2 text-[10px] font-mono text-[#1C1C1C]/80">
-                  KG Error: {kgError}
-                </div>
-              </Panel>
+      <main className="flex-1 relative flex flex-col overflow-hidden bg-[#F9F8F6]">
+        {/* Top toolbar — always visible across all view modes (视图切换 + undo/redo + 面板开关) */}
+        <div className="shrink-0 border-b border-[#1C1C1C]/10 px-4 py-2 flex items-center gap-2 bg-[#F9F8F6] z-10">
+          {/* 视图切换器 */}
+          <div className="flex items-center border border-[#1C1C1C]/20">
+            {(["graph", "mindmap", "skeleton"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={cn(
+                  "px-3 py-1.5 font-sans text-[10px] uppercase tracking-[0.2em] transition-colors duration-200 focus:outline-none",
+                  viewMode === mode
+                    ? "bg-[#1C1C1C] text-[#F9F8F6]"
+                    : "bg-transparent text-[#1C1C1C] hover:bg-[#1C1C1C]/5"
+                )}
+              >
+                {mode === "graph"
+                  ? t("board.viewGraph")
+                  : mode === "mindmap"
+                  ? t("board.viewMindmap")
+                  : t("board.viewSkeleton")}
+              </button>
+            ))}
+          </div>
+          <div className="w-px h-6 bg-[#1C1C1C]/10" />
+          {viewMode === "graph" && (
+            <>
+              <button
+                type="button"
+                onClick={undo}
+                disabled={!canUndo}
+                className="inline-flex items-center justify-center bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-3 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
+                title={t("board.undo")}
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={!canRedo}
+                className="inline-flex items-center justify-center bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-3 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
+                title={t("board.redo")}
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </button>
+              <div className="w-px h-6 bg-[#1C1C1C]/10" />
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowOriginalText((v) => !v)}
+            disabled={!documentContent?.rawText}
+            className={cn(
+              "inline-flex items-center gap-2 bg-[#F9F8F6] border font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed",
+              showOriginalText
+                ? "border-[#1C1C1C] text-[#1C1C1C]"
+                : "border-[#1C1C1C]/20 text-[#1C1C1C] hover:border-[#1C1C1C]"
             )}
-          </ReactFlow>
-
-        {activeNodeData && (
-          <div className="absolute top-0 right-0 h-full z-20 animate-in slide-in-from-right-8 duration-300">
-            <AIErrorBoundary
-              context="explain"
-              onDismiss={() => setActiveNodeId(null)}
+            title={t("board.originalText")}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            {t("board.originalText")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowQA((v) => !v)}
+            disabled={!projectId}
+            className={cn(
+              "inline-flex items-center gap-2 bg-[#F9F8F6] border font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed",
+              showQA
+                ? "border-[#1C1C1C] text-[#1C1C1C]"
+                : "border-[#1C1C1C]/20 text-[#1C1C1C] hover:border-[#1C1C1C]"
+            )}
+            title={t("board.askPaper")}
+          >
+            <MessageCircle className="w-3.5 h-3.5" />
+            {t("board.askPaper")}
+          </button>
+          {viewMode === "graph" && (
+            <button
+              type="button"
+              onClick={handleExportImage}
+              disabled={nodes.length === 0}
+              className="inline-flex items-center gap-2 bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
+              title={t("board.exportImage")}
             >
-              <ExplanationPanel
-                node={activeNodeData}
-                onClose={() => setActiveNodeId(null)}
-                onUpdateNode={handleUpdateNodeData}
+              <ImageIcon className="w-3.5 h-3.5" />
+              {t("board.exportImage")}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowHistory(true)}
+            disabled={!projectId}
+            className="inline-flex items-center gap-2 bg-[#F9F8F6] border border-[#1C1C1C]/20 text-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:border-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
+            title={t("history.title")}
+          >
+            <HistoryIcon className="w-3.5 h-3.5" />
+            {t("history.title")}
+          </button>
+          <div className="w-px h-6 bg-[#1C1C1C]/10" />
+          <SaveIndicator
+            status={saveStatus}
+            lastSavedAt={lastSavedAt}
+            alwaysShow
+          />
+        </div>
+
+        {/* Content area — swaps between Knowledge Graph / Mind Map / Skeleton */}
+        <div className="flex-1 relative flex overflow-hidden">
+          {showOriginalText && documentContent?.rawText && (
+            <OriginalTextPanel
+              rawText={documentContent.rawText}
+              highlightText={highlightText}
+              onClose={() => {
+                setShowOriginalText(false);
+                setHighlightText(null);
+              }}
+            />
+          )}
+          {showQA && projectId && (
+            <AIErrorBoundary
+              context="qa"
+              onDismiss={() => setShowQA(false)}
+              onRetry={() => window.location.reload()}
+            >
+              <QAPanel
+                projectId={projectId}
+                onClose={() => setShowQA(false)}
               />
             </AIErrorBoundary>
-          </div>
-        )}
+          )}
 
-        {showHistory && projectId && (
-          <HistoryPanel
-            projectId={projectId}
-            open={showHistory}
-            currentNodes={nodes as unknown as DocumentNode[]}
-            currentEdges={edges as unknown as DocumentEdge[]}
-            onClose={() => setShowHistory(false)}
-            onRollback={(newNodes, newEdges) => {
-              setNodes(
-                newNodes.map((n) => ({
+          {viewMode === "graph" && (
+            <ReactFlow
+              nodes={visibleNodes}
+              edges={visibleEdges}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={handleEdgesChange}
+              onNodeClick={handleNodeClick}
+              onNodeMouseEnter={handleNodeMouseEnter}
+              onNodeMouseLeave={handleNodeMouseLeave}
+              onEdgeClick={(_evt, edge) => {
+                const de: DocumentEdge = {
+                  id: edge.id,
+                  source: edge.source,
+                  target: edge.target,
+                  label: typeof edge.label === "string" ? edge.label : undefined,
+                  type: edge.type as string | undefined,
+                  edgeType: (edge.data?.edgeType as DocumentEdge["edgeType"]) ?? "relates",
+                  note: (edge.data?.note as string) ?? undefined,
+                };
+                setEditingEdge(de);
+              }}
+              onConnect={onConnect}
+              onNodeDragStart={handleNodeDragStart}
+              onDoubleClick={handlePaneDoubleClick}
+              onInit={setRfInstance}
+              deleteKeyCode={null}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              connectionMode={ConnectionMode.Loose}
+              fitView
+              fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
+              minZoom={0.15}
+              className="bg-[#F9F8F6]"
+            >
+              <Background
+                color="#1C1C1C"
+                gap={24}
+                size={1}
+                className="opacity-10"
+              />
+              <Controls
+                className="!bg-[#F9F8F6] !border-[#1C1C1C]/10 !fill-[#1C1C1C] !shadow-none !rounded-none"
+                showInteractive={false}
+                position="top-right"
+              />
+              {documentContent && !kgGraphId && (
+                <Panel position="top-center" className="!mt-2">
+                  <div className="bg-[#1C1C1C]/5 border border-[#1C1C1C] px-4 py-2 text-[10px] font-mono text-[#1C1C1C]/80">
+                    No knowledge graph yet. Use Import to generate.
+                  </div>
+                </Panel>
+              )}
+            </ReactFlow>
+          )}
+
+          {viewMode === "mindmap" && kgGraphId ? (
+            <EditableMarkmap
+              documentTitle={documentContent?.title || t("board.titlePlaceholder")}
+              sections={documentContent?.sections}
+              onJumpToAnchor={handleJumpToAnchor}
+              onChange={async (sections) => {
+                if (!kgGraphId) return;
+                // 防抖：把当前 sections 写入本地 state，AI 润色或失焦时再统一保存
+                setDocumentContent((prev) => (prev ? { ...prev, sections } : prev));
+                try {
+                  await fetch(`/api/concept-graph/${kgGraphId}/sections`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sections }),
+                  });
+                } catch (e) {
+                  console.warn("[board] failed to save sections", e);
+                }
+              }}
+              onAIRewrite={async (nodeId, title, summary) => {
+                if (!kgGraphId) throw new Error("no graph id");
+                const r = await fetch(
+                  `/api/concept-graph/${kgGraphId}/sections/ai-rewrite`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ nodeId, title, summary }),
+                  }
+                );
+                if (!r.ok) throw new Error(`AI rewrite failed (${r.status})`);
+                const data = await r.json();
+                return { title: data.title, summary: data.summary };
+              }}
+            />
+          ) : viewMode === "mindmap" ? (
+            <div className="flex-1 flex items-center justify-center p-12 bg-[#F9F8F6]">
+              <p className="font-sans text-sm italic text-[#1C1C1C]/40">
+                {t("board.mindmapEmpty")}
+              </p>
+            </div>
+          ) : null}
+
+          {viewMode === "skeleton" && (
+            <ArgumentSkeletonView
+              skeleton={documentContent?.skeleton}
+              onJumpToAnchor={handleJumpToAnchor}
+            />
+          )}
+
+          {activeNodeData && (
+            <div className="absolute top-0 right-0 h-full z-20 animate-in slide-in-from-right-8 duration-300">
+              <AIErrorBoundary
+                context="explain"
+                onDismiss={() => setActiveNodeId(null)}
+              >
+                <ExplanationPanel
+                  node={activeNodeData}
+                  onClose={() => setActiveNodeId(null)}
+                  onUpdateNode={handleUpdateNodeData}
+                />
+              </AIErrorBoundary>
+            </div>
+          )}
+
+          {showHistory && projectId && (
+            <HistoryPanel
+              projectId={projectId}
+              open={showHistory}
+              currentNodes={nodes as unknown as DocumentNode[]}
+              currentEdges={edges as unknown as DocumentEdge[]}
+              onClose={() => setShowHistory(false)}
+              onRollback={(newNodes, newEdges) => {
+                setNodes(
+                  newNodes.map((n) => ({
+                    id: n.id,
+                    type: n.type,
+                    position: n.position,
+                    data: { ...n.data, isActive: false },
+                  })) as unknown as Node[]
+                );
+                setEdges(
+                  newEdges.map((e) => ({
+                    id: e.id,
+                    source: e.source,
+                    target: e.target,
+                    label: e.label,
+                    type: e.type,
+                  })) as unknown as Edge[]
+                );
+                initialNodesRef.current = newNodes.map((n) => ({
                   id: n.id,
                   type: n.type,
                   position: n.position,
                   data: { ...n.data, isActive: false },
-                })) as unknown as Node[]
-              );
-              setEdges(
-                newEdges.map((e) => ({
+                })) as unknown as Node[];
+                initialEdgesRef.current = newEdges.map((e) => ({
                   id: e.id,
                   source: e.source,
                   target: e.target,
                   label: e.label,
                   type: e.type,
-                })) as unknown as Edge[]
-              );
-              initialNodesRef.current = newNodes.map((n) => ({
-                id: n.id,
-                type: n.type,
-                position: n.position,
-                data: { ...n.data, isActive: false },
-              })) as unknown as Node[];
-              initialEdgesRef.current = newEdges.map((e) => ({
-                id: e.id,
-                source: e.source,
-                target: e.target,
-                label: e.label,
-                type: e.type,
-              })) as unknown as Edge[];
-              isCanvasDirtyRef.current = false;
-              setSaveStatus("saved");
-            }}
-          />
-        )}
+                })) as unknown as Edge[];
+                isCanvasDirtyRef.current = false;
+                setSaveStatus("saved");
+              }}
+            />
+          )}
 
-        {editingEdge && (
-          <EdgeEditorModal
-            edge={editingEdge}
-            open={!!editingEdge}
-            onClose={() => setEditingEdge(null)}
-            onSave={(next) => {
-              // Take undo snapshot before mutating structure.
-              setPast((p) => [...p, snapshot()].slice(-MAX_HISTORY));
-              setFuture([]);
-              setEdges((prev) =>
-                prev.map((e) => {
-                  if (e.id !== next.id) return e;
-                  const visual = buildEdge(next);
-                  return {
-                    ...e,
-                    label: next.label,
-                    type: next.type,
-                    animated: visual.animated,
-                    style: visual.style,
-                    labelStyle: visual.labelStyle,
-                    labelBgStyle: visual.labelBgStyle,
-                    data: visual.data,
-                  } as Edge;
-                })
-              );
-              isCanvasDirtyRef.current = true;
-              setSaveStatus("dirty");
-              if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-              saveTimerRef.current = setTimeout(() => {
-                performSave(false);
-              }, AUTOSAVE_DEBOUNCE_MS);
-              setEditingEdge(null);
-            }}
-          />
-        )}
+          {editingEdge && (
+            <EdgeEditorModal
+              edge={editingEdge}
+              open={!!editingEdge}
+              onClose={() => setEditingEdge(null)}
+              onSave={(next) => {
+                // Take undo snapshot before mutating structure.
+                setPast((p) => [...p, snapshot()].slice(-MAX_HISTORY));
+                setFuture([]);
+                setEdges((prev) =>
+                  prev.map((e) => {
+                    if (e.id !== next.id) return e;
+                    const visual = buildEdge(next);
+                    return {
+                      ...e,
+                      label: next.label,
+                      type: next.type,
+                      animated: visual.animated,
+                      style: visual.style,
+                      labelStyle: visual.labelStyle,
+                      labelBgStyle: visual.labelBgStyle,
+                      data: visual.data,
+                    } as Edge;
+                  })
+                );
+                isCanvasDirtyRef.current = true;
+                setSaveStatus("dirty");
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = setTimeout(() => {
+                  performSave(false);
+                }, AUTOSAVE_DEBOUNCE_MS);
+                setEditingEdge(null);
+              }}
+            />
+          )}
+        </div>
       </main>
     </div>
   );

@@ -32,7 +32,7 @@ import { normaliseGraph } from "@/utils/graph-normalize";
 import { exportAndDownload } from "@/utils/export-markdown";
 import type { ExportFormat } from "@/utils/export-markdown";
 import { exportGraphAsImage } from "@/utils/export-image";
-import { autoLayout, applyLayoutTemplate, clusterForceDirectedLayout, simpleForceDirectedLayout, filterIsolatedNodes, markMainNode, type LayoutTemplate } from "@/utils/auto-layout";
+import { simpleForceDirectedLayout, filterIsolatedNodes, markMainNode } from "@/utils/auto-layout";
 import { pickFirstString } from "@/utils/string";
 import { buildEdge } from "@/utils/edge-style";
 import {
@@ -52,12 +52,11 @@ import { OriginalTextPanel } from "@/components/board/OriginalTextPanel";
 import { QAPanel } from "@/components/board/QAPanel";
 import { AIErrorBoundary } from "@/components/errors/AIErrorBoundary";
 import { EdgeEditorModal } from "@/components/board/EdgeEditorModal";
-import { LayoutMenu } from "@/components/board/LayoutMenu";
 import { HistoryPanel } from "@/components/board/HistoryPanel";
 import { createVersion } from "@/api/versions";
 import { conceptGraphToParsedDocument } from "@/utils/concept-graph-bridge";
 import type { ConceptGraph, Concept, ConceptEdge, ConceptCluster } from "@/types/concept-graph";
-import { Undo2, Redo2, FileText, MessageCircle, Image as ImageIcon, History as HistoryIcon, Network } from "lucide-react";
+import { Undo2, Redo2, FileText, MessageCircle, Image as ImageIcon, History as HistoryIcon } from "lucide-react";
 
 // Register both CodeNode and ConceptNode — code projects may still have
 // "concept" type nodes for architectural ideas.
@@ -140,11 +139,6 @@ function CodeBoardPageInner() {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [highlightText, setHighlightText] = useState<string | null>(null);
 
-  // Knowledge-graph pipeline state
-  const [isGeneratingKG, setIsGeneratingKG] = useState(false);
-  const [kgJobId, setKgJobId] = useState<string | null>(null);
-  const [kgProgress, setKgProgress] = useState<{ step: string; current: number; total: number } | null>(null);
-  const [kgError, setKgError] = useState<string | null>(null);
   const [clusterLegend, setClusterLegend] = useState<{ id: string; label: string; color: string; count: number }[]>([]);
 
   // 当前加载的知识图谱 ID（用于保存到 conceptGraphs 表）
@@ -540,9 +534,8 @@ function CodeBoardPageInner() {
           setEdges([]);
           initialNodesRef.current = [];
           initialEdgesRef.current = [];
-          // Fire-and-forget: the polling effect will populate the
-          // canvas when the pipeline finishes.
-          handleGenerateKnowledgeGraph();
+          // No KG exists. The user can re-trigger generation from the
+          // /code-import page via the sidebar's Import button.
         }
         // Skip the first auto-save that fires from re-mounting state.
         skipNextSaveRef.current = true;
@@ -790,126 +783,6 @@ function CodeBoardPageInner() {
     }
   }, [setNodes, setEdges]);
 
-  // ----- Knowledge-graph generation -----
-  const handleGenerateKnowledgeGraph = useCallback(async () => {
-    const id = projectIdRef.current;
-    if (!id) return;
-    setIsGeneratingKG(true);
-    setKgError(null);
-    setKgProgress({ step: "queued", current: 0, total: 7 });
-    try {
-      const resp = await fetch("/api/concept-graph/ingest", {
-        method: "POST",
-        body: (() => {
-          const fd = new FormData();
-          fd.append("type", "code");
-          fd.append("projectId", id);
-          return fd;
-        })(),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to start pipeline (${resp.status})`);
-      }
-      const { jobId } = await resp.json();
-      if (!jobId) throw new Error("No job id returned");
-      setKgJobId(jobId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate knowledge graph";
-      setKgError(msg);
-      setIsGeneratingKG(false);
-      setKgProgress(null);
-    }
-  }, []);
-
-  // Poll the KG job status until done/failed
-  useEffect(() => {
-    if (!kgJobId) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const r = await fetch(`/api/concept-graph/jobs/${kgJobId}`);
-        if (!r.ok) throw new Error(`Job poll failed (${r.status})`);
-        const job = await r.json();
-        if (cancelled) return;
-        setKgProgress(job.progress);
-        if (job.status === "done" && job.graphId) {
-          const gr = await fetch(`/api/concept-graph/${job.graphId}`);
-          if (!gr.ok) throw new Error("Failed to fetch generated graph");
-          const { graph } = await gr.json();
-          const conceptGraph = graph as ConceptGraph;
-          const parsed = conceptGraphToParsedDocument(conceptGraph);
-          if (parsed.nodes.length === 0) {
-            throw new Error("Knowledge graph generated 0 concepts. The source text may be too short or the LLM failed to extract concepts.");
-          }
-          setDocumentContent(parsed);
-          setClusterLegend(
-            (parsed as ParsedDocument & { clusters?: { id: string; label: string; colorName: string; conceptIds: string[] }[] })
-              .clusters?.map((c) => ({
-                id: c.id,
-                label: c.label || c.id,
-                color: ["slate","rust","olive","navy","plum","teal","umber","moss"].includes(c.colorName)
-                  ? { slate:"#1C1C1C", rust:"#A0522D", olive:"#6B8E23", navy:"#1C2B4B", plum:"#5D3A5D", teal:"#2F5D5D", umber:"#6B4226", moss:"#4A5D23" }[c.colorName] || "#1C1C1C"
-                  : "#1C1C1C",
-                count: c.conceptIds.length,
-              })) || []
-          );
-          // Track the KG id + clusters so subsequent edits auto-save
-          // back to the conceptGraphs table.
-          setKgGraphId(job.graphId);
-          kgGraphIdRef.current = job.graphId;
-          kgClustersRef.current = conceptGraph.clusters || [];
-          let flowNodes: Node[] = parsed.nodes.map((n) => ({
-            id: n.id,
-            type: "concept-graph" as const,
-            position: n.position,
-            data: { ...n.data, isActive: false },
-          }));
-          const flowEdges: Edge[] = parsed.edges.map((e) => buildEdge(e));
-          const { nodes: connectedNodes, edges: connectedEdges } = filterIsolatedNodes(flowNodes, flowEdges);
-          const markedNodes = markMainNode(connectedNodes);
-          const positionedNodes = simpleForceDirectedLayout(markedNodes, connectedEdges);
-          setNodes(positionedNodes);
-          setEdges(connectedEdges);
-          initialNodesRef.current = positionedNodes;
-          initialEdgesRef.current = connectedEdges;
-          syncClusterCenters([]);
-          setHiddenClusterIds(new Set());
-          setTimeout(() => rfInstance?.fitView({ padding: 0.25, duration: 400 }), 100);
-          // The KG is now the editable surface — do NOT skip auto-save.
-          // Just mark the canvas as clean so the freshly-loaded state
-          // does not trigger an immediate re-save.
-          isCanvasDirtyRef.current = false;
-          setIsGeneratingKG(false);
-          setKgJobId(null);
-          // We are already on /codeboard?id=… — the import flow happens
-          // at /code-import and navigates here on success. There is no
-          // need to re-issue router.replace; doing so would briefly
-          // unmount the canvas and cause a flash of the LoadingScreen.
-        } else if (job.status === "failed") {
-          throw new Error(job.error || "Pipeline failed");
-        } else if (job.status === "done" && !job.graphId) {
-          // Job marked done but no graph was produced — treat as error
-          // so the user is not left polling forever.
-          throw new Error("Pipeline completed but produced no graph.");
-        }
-      } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "Pipeline error";
-        setKgError(msg);
-        setIsGeneratingKG(false);
-        setKgJobId(null);
-        setKgProgress(null);
-      }
-    };
-    poll();
-    const interval = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [kgJobId, setNodes, setEdges]);
-
   const handleNodeClick = useCallback(
     (_: React.MouseEvent | React.TouchEvent, node: Node) => {
       setActiveNodeId(node.id);
@@ -936,34 +809,6 @@ function CodeBoardPageInner() {
   const handleNodeMouseLeave = useCallback(() => {
     setHoveredNodeId(null);
   }, []);
-
-  // ----- Auto-layout: run dagre and update node positions -----
-  const handleAutoLayout = useCallback(() => {
-    commit();
-    const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
-    const laidOut = autoLayout(conceptNodes, edgesRef.current, "TB");
-    setNodes(laidOut);
-    setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-  }, [setNodes, commit, rfInstance]);
-
-  // ----- Apply a named layout template -----
-  const handleApplyTemplate = useCallback((template: LayoutTemplate) => {
-    commit();
-    const conceptNodes = nodesRef.current.filter((n) => n.type !== "cluster-group");
-    if (template === "force") {
-      const positionedNodes = simpleForceDirectedLayout(
-        conceptNodes,
-        edgesRef.current,
-        { width: 1700, height: 1200 }
-      );
-      setNodes(positionedNodes);
-      setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-    } else {
-      const laidOut = applyLayoutTemplate(conceptNodes, edgesRef.current, template);
-      setNodes(laidOut);
-      setTimeout(() => rfInstance?.fitView({ padding: 0.3, duration: 400 }), 100);
-    }
-  }, [setNodes, commit, rfInstance]);
 
   // ----- Export the current graph as a PNG image -----
   const handleExportImage = useCallback(async () => {
@@ -1280,12 +1125,6 @@ function CodeBoardPageInner() {
                   <Redo2 className="w-3.5 h-3.5" />
                 </button>
                 <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <LayoutMenu
-                  disabled={nodes.length === 0}
-                  onAutoLayout={handleAutoLayout}
-                  onApplyTemplate={handleApplyTemplate}
-                />
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
                 <button
                   type="button"
                   onClick={() => setShowOriginalText((v) => !v)}
@@ -1334,23 +1173,12 @@ function CodeBoardPageInner() {
                   <HistoryIcon className="w-3.5 h-3.5" />
                   {t("history.title")}
                 </button>
-                <div className="w-px h-6 bg-[#1C1C1C]/10" />
-                <button
-                  type="button"
-                  onClick={handleGenerateKnowledgeGraph}
-                  disabled={!projectId || isGeneratingKG}
-                  className="inline-flex items-center gap-2 bg-[#1C1C1C] text-[#F9F8F6] border border-[#1C1C1C] font-sans text-[10px] uppercase tracking-[0.2em] px-4 py-2 transition-colors duration-200 hover:bg-transparent hover:text-[#1C1C1C] disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none"
-                  title="Generate concept knowledge graph"
-                >
-                  <Network className="w-3.5 h-3.5" />
-                  {isGeneratingKG ? `KG ${kgProgress?.current || 0}/${kgProgress?.total || 7}` : "Knowledge Graph"}
-                </button>
               </div>
             </Panel>
-            {kgError && (
+            {documentContent && !kgGraphId && (
               <Panel position="top-center" className="!mt-2">
                 <div className="bg-[#1C1C1C]/5 border border-[#1C1C1C] px-4 py-2 text-[10px] font-mono text-[#1C1C1C]/80">
-                  KG Error: {kgError}
+                  No knowledge graph yet. Use Import to generate.
                 </div>
               </Panel>
             )}

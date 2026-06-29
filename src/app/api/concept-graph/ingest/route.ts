@@ -274,6 +274,14 @@ async function runPipeline(
         edges: result.edges,
         clusters: result.clusters,
         rawText: rawText.substring(0, 100000), // store original HTML
+        // 持久化思维导图（sections）和论证骨架（skeleton），
+        // 以便 Board 页面加载时能直接渲染这两个视图。
+        ...(result.sections && result.sections.length > 0
+          ? { sections: result.sections }
+          : {}),
+        ...(result.skeleton && result.skeleton.nodes.length > 0
+          ? { skeleton: result.skeleton }
+          : {}),
         userId,
         // Link the graph to its source document so board/codeboard
         // can look it up via /api/concept-graph/by-document/[documentId].
@@ -385,7 +393,7 @@ export async function POST(request: NextRequest) {
         .values({
           userId,
           status: "processing",
-          progress: { step: "queued", current: 0, total: 7 },
+          progress: { step: "queued", current: 0, total: 5 },
           inputType: type,
         })
         .returning();
@@ -557,7 +565,7 @@ export async function POST(request: NextRequest) {
       .values({
         userId,
         status: "processing",
-        progress: { step: "queued", current: 0, total: 7 },
+        progress: { step: "queued", current: 0, total: 5 },
         inputType: type,
         inputUrl: url || null,
         inputFileName: sourceLabel || null,

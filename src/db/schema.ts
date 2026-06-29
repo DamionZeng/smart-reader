@@ -269,6 +269,10 @@ export const conceptGraphs = pgTable(
     edges: jsonb("edges").notNull(),
     clusters: jsonb("clusters").notNull(),
     rawText: text("raw_text"),
+    // LLM 抽取的章节大纲（思维导图视图用）。可空：代码项目不生成。
+    sections: jsonb("sections"),
+    // LLM 抽取的论证骨架（论证骨架图视图用）。可空：代码项目不生成。
+    skeleton: jsonb("skeleton"),
     authors: text("authors"),
     year: integer("year"),
     venue: varchar("venue", { length: 255 }),
@@ -296,7 +300,7 @@ export const conceptGraphJobs = pgTable(
       onDelete: "cascade",
     }),
     status: varchar("status", { length: 20 }).notNull().default("processing"),
-    progress: jsonb("progress").notNull().default({ step: "queued", current: 0, total: 7 }),
+    progress: jsonb("progress").notNull().default({ step: "queued", current: 0, total: 5 }),
     graphId: uuid("graph_id"),
     projectId: uuid("project_id"),
     error: text("error"),

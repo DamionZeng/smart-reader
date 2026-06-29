@@ -1,3 +1,5 @@
+import type { DocumentSection, ArgumentSkeleton } from "@/types/concept-graph";
+
 export type ProjectType = 'paper' | 'code' | 'image';
 
 /** Section classification for paper nodes */
@@ -87,6 +89,10 @@ export interface ParsedDocument {
   metadata?: PaperMetadata;
   nodes: DocumentNode[];
   edges: DocumentEdge[];
+  /** LLM 整理的章节大纲（用于侧栏 outline 与思维导图视图） */
+  sections?: DocumentSection[];
+  /** LLM 抽取的论证骨架（用于论证骨架图视图） */
+  skeleton?: ArgumentSkeleton;
 }
 
 export interface NodeExplanation {

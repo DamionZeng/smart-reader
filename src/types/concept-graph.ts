@@ -75,6 +75,43 @@ export interface ConceptCluster {
   level: number;
 }
 
+// === 文档章节（LLM 整理） ===
+export interface DocumentSection {
+  id: string;
+  title: string;
+  level: number; // 0 = 顶级, 1 = 子章节
+  summary: string; // LLM 生成的章节摘要（1-2 句）
+  conceptIds: string[]; // 该章节涉及的概念节点 id
+  anchor?: string; // 原文锚点句（用于跳转定位）
+  children?: DocumentSection[];
+}
+
+// === 论证骨架（LLM 抽取的论断-证据结构） ===
+// 论证骨架图的核心：不是"章节"，而是"作者在论证什么"。
+// 每个 claim 是一个论断，有支撑/反例/推论关系。
+export type ArgumentRelation = "supports" | "opposes" | "extends" | "evidence" | "limitation";
+
+export interface ArgumentNode {
+  id: string;
+  text: string; // 论断原文（verbatim 或 LLM 改写）
+  type: "claim" | "evidence" | "counter" | "limitation" | "method" | "result";
+  section?: string; // 所属章节标题
+  anchor?: string; // 原文锚点句（用于跳转）
+  conceptIds?: string[]; // 关联的概念 id
+}
+
+export interface ArgumentLink {
+  source: string; // ArgumentNode id
+  target: string; // ArgumentNode id
+  relation: ArgumentRelation;
+}
+
+export interface ArgumentSkeleton {
+  nodes: ArgumentNode[];
+  links: ArgumentLink[];
+  mainClaimId?: string; // 核心论断 id
+}
+
 // === 完整图谱 ===
 export interface ConceptGraph {
   id: string;
@@ -85,6 +122,8 @@ export interface ConceptGraph {
   concepts: Concept[];
   edges: ConceptEdge[];
   clusters: ConceptCluster[];
+  sections?: DocumentSection[]; // LLM 整理的章节大纲
+  skeleton?: ArgumentSkeleton; // LLM 抽取的论证骨架
   createdAt: string;
 }
 

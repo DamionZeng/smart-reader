@@ -81,7 +81,7 @@ const KG_DONE_RAPID_INTERVAL_MS = 500;
  * Responsibilities:
  *   1. Calls `parseDocument` to extract text + create/augment a project
  *      shell via `/api/ingest`.
- *   2. Triggers the 7-step KG pipeline via `/api/concept-graph/ingest`.
+ *   2. Triggers the 3-step KG pipeline via `/api/concept-graph/ingest`.
  *   3. Polls the job status every 3s.
  *   4. On success, navigates to `successRoute` with the new project id.
  *   5. On failure, exposes the error and resets the loading flags.
@@ -311,7 +311,7 @@ export function useIngestionFlow(
     async (projectId: string) => {
       setIsGeneratingKG(true);
       setKgError(null);
-      setKgProgress({ step: "queued", current: 0, total: 7 });
+      setKgProgress({ step: "queued", current: 0, total: 5 });
       // Fresh AbortController for the KG POST. A previous run may
       // have left an aborted controller hanging in the ref; replace
       // it here so the new request is cancellable independently.
@@ -410,7 +410,7 @@ export function useIngestionFlow(
 
         setIngestStage("generating");
 
-        // Step 2: kick off the 7-step KG pipeline. The polling effect
+        // Step 2: kick off the 3-step KG pipeline. The polling effect
         // picks up `kgJobId`, watches the job, and navigates to
         // `successRoute` once the graph is ready.
         await startKnowledgeGraph(workingId);

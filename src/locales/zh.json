@@ -258,7 +258,14 @@
     "forceCenter": "向心力",
     "forceCenterHint": "向画布中心收拢",
     "forceClusterPull": "簇内拉力",
-    "forceClusterPullHint": "越大簇越紧凑"
+    "forceClusterPullHint": "越大簇越紧凑",
+    "viewGraph": "知识图谱",
+    "viewMindmap": "思维导图",
+    "viewSkeleton": "论证骨架图",
+    "mindmapEmpty": "暂无章节大纲，请重新导入文档以生成。",
+    "skeletonComingSoon": "论证骨架图视图 — 即将推出",
+    "sectionSummary": "摘要",
+    "sectionConcepts": "涉及概念"
   },
   "user": {
     "signedInAs": "已登录为",
@@ -427,13 +434,9 @@
       "stage2Done": "已完成",
       "subStepsLabel": "子步骤",
       "step1_1": "获取并提取资料文本",
-      "step2_1": "提取文本内容",
-      "step2_2": "切分语句段落",
-      "step2_3": "AI 抽取概念",
-      "step2_4": "合并实体消歧",
-      "step2_5": "构建共现关系",
-      "step2_6": "社区检测聚类",
-      "step2_7": "概念描述增强"
+      "step2_1": "AI 抽取概念",
+      "step2_2": "构建图谱结构",
+      "step2_3": "生成思维导图与论证骨架"
     }
   },
   "projectType": {

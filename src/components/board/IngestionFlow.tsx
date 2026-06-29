@@ -9,7 +9,7 @@ import { cn } from "@/utils/cn";
  *
  * The pipeline is intentionally short:
  *   - "preparing": the source text is being fetched / extracted.
- *   - "generating": the 7-step knowledge-graph pipeline is running.
+ *   - "generating": the 3-step knowledge-graph pipeline is running.
  *   - "done": graph is rendered.
  *   - "error": terminal failure (the active stage when errorMessage is set).
  */
@@ -43,6 +43,11 @@ interface StageDef {
  * Stage definitions. The order here defines the left-to-right order in
  * the flow chart. Sub-step keys are stable so the rotating indicator
  * can cycle through them.
+ *
+ * v3 重构后管线精简为 3 步：
+ *   1. extractConcepts：并行执行句子分割 + AI 概念抽取
+ *   2. buildGraph：本地实体归并 + 共现边 + PageRank
+ *   3. enrich：并行执行 3 个 AI 任务（概念富化 + 思维导图 + 论证骨架）
  */
 const STAGES: StageDef[] = [
   {
@@ -68,13 +73,9 @@ const STAGES: StageDef[] = [
       done: "ingest.flow.stage2Done",
     },
     subSteps: [
-      { key: "extractText", labelKey: "ingest.flow.step2_1" },
-      { key: "splitSentences", labelKey: "ingest.flow.step2_2" },
-      { key: "extractConcepts", labelKey: "ingest.flow.step2_3" },
-      { key: "resolveEntities", labelKey: "ingest.flow.step2_4" },
-      { key: "buildEdges", labelKey: "ingest.flow.step2_5" },
-      { key: "detectClusters", labelKey: "ingest.flow.step2_6" },
-      { key: "enrichConcepts", labelKey: "ingest.flow.step2_7" },
+      { key: "extractConcepts", labelKey: "ingest.flow.step2_1" },
+      { key: "buildGraph", labelKey: "ingest.flow.step2_2" },
+      { key: "enrich", labelKey: "ingest.flow.step2_3" },
     ],
   },
 ];
@@ -143,7 +144,7 @@ export function IngestionFlow({
       if (match) return match.key;
     }
     // No real progress yet — fall back to the first sub-step rather
-    // than cycling, so the indicator is stable.
+    // than cycling, so the indicator is stable. (v3: 3 sub-steps)
     return stage.subSteps[0]?.key || null;
   }
 
