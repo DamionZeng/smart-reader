@@ -564,7 +564,7 @@ function BoardPageInner() {
     return result.map((e) => {
       const isHighlighted = e.source === hoveredNodeId || e.target === hoveredNodeId;
       if (isHighlighted) {
-        const baseW = e.style?.strokeWidth ?? 1;
+        const baseW = typeof e.style?.strokeWidth === "number" ? e.style.strokeWidth : 1;
         return {
           ...e,
           style: {

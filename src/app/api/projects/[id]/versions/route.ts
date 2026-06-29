@@ -99,10 +99,7 @@ export async function POST(
         nodes: parsed.data.nodes,
         edges: parsed.data.edges,
       })
-      .returning({
-        id: projectVersions.id,
-        createdAt: projectVersions.createdAt,
-      });
+      .returning();
 
     // Cleanup: keep only the most recent N versions
     const allVersions = await db
@@ -120,7 +117,11 @@ export async function POST(
         .where(inArray(projectVersions.id, toDelete));
     }
 
-    return NextResponse.json({ version: row }, { status: 201 });
+    return NextResponse.json({
+      version: row
+        ? { id: row.id, createdAt: row.createdAt }
+        : null,
+    }, { status: 201 });
   } catch (error) {
     console.error("[versions] POST error", error);
     return NextResponse.json(
