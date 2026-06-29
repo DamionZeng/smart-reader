@@ -10,7 +10,6 @@ const nextConfig: NextConfig = {
   // path no longer resolves in the bundled output.
   serverExternalPackages: [
     "pdfjs-dist",
-    "pdf-parse",
     "pngjs",
     "mammoth",
     "canvas",

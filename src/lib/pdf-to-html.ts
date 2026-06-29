@@ -5,7 +5,9 @@
  * producing structured HTML that preserves the document's formatting
  * (headings, paragraphs, lists) and inline images (uploaded to R2).
  *
- * Used by /api/ingest to replace the old pdf-parse plain-text extraction.
+ * Used by /api/ingest as the sole PDF parser (the old pdf-parse fallback
+ * was removed — it bundled its own pdfjs-dist v5 whose worker-based
+ * architecture is incompatible with Vercel Lambda).
  * The resulting HTML is stored as rawText; the KG pipeline calls
  * stripHtml() to get plain text for LLM processing.
  */
@@ -13,6 +15,13 @@
 import { escapeHtml } from "@/utils/html-utils";
 import { uploadImage, isR2Configured } from "@/lib/storage";
 import { PNG } from "pngjs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+
+// Native require for resolving pdfjs worker path at runtime.
+// pdfjs-dist is in serverExternalPackages, so webpack leaves it external
+// — createRequire bypasses webpack's module resolution entirely.
+const moduleRequire = createRequire(import.meta.url);
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -115,20 +124,41 @@ async function getPdfjs() {
       const mod = await import(
         /* webpackIgnore: true */ "pdfjs-dist/legacy/build/pdf.mjs"
       );
-      // We run server-side in Node, so we never need a real Web Worker.
-      // Pass `useWorkerFetch: false` and `isEvalSupported: false` plus
-      // `disableWorker: true` on getDocument() to keep pdfjs in the
-      // main process. The legacy import (vs the modern build) already
-      // supports a "fake worker" mode, but the fake worker still
-      // requires `GlobalWorkerOptions.workerSrc` to point at a real
-      // file on disk — and under Next.js RSC the worker .mjs lives in
-      // a webpack-bundled path like `/.next/(rsc)/node_modules/...`
-      // that `createRequire(import.meta.url).resolve()` can't find
-      // (it returns the unbundled node_modules path instead). Setting
-      // `GlobalWorkerOptions.workerSrc = ""` here would trip the
-      // "No workerSrc specified" guard, so we leave it untouched and
-      // rely on the per-task `disableWorker: true` below to skip the
-      // fake-worker init entirely. That's the documented Node usage.
+
+      // ─── CRITICAL: Set GlobalWorkerOptions.workerSrc ───
+      //
+      // pdfjs-dist v4 ALWAYS loads the worker code via dynamic import(),
+      // even when `disableWorker: true` is passed to getDocument().
+      // `disableWorker: true` only prevents the creation of a separate
+      // Web Worker thread — it still imports the worker module to run
+      // on the main thread ("fake worker" mode).
+      //
+      // By default, workerSrc is a relative path ("./pdf.worker.mjs")
+      // resolved relative to the importing module. This works in local
+      // dev because the full node_modules tree is on disk. On Vercel
+      // Lambda (/var/task/), it fails for two reasons:
+      //   1. The worker .mjs may not be included in the Lambda bundle
+      //      because Vercel's file tracer (@vercel/nft) only traces
+      //      statically-referenced files — dynamic import() with a
+      //      relative path is NOT statically traceable.
+      //   2. Even if present, the relative path may not resolve from
+      //      the Lambda's working directory.
+      //
+      // Setting workerSrc to an absolute file:// URL fixes both:
+      //   1. require.resolve() with a string literal IS statically
+      //      detectable by @vercel/nft, so the worker file gets
+      //      included in the Lambda bundle.
+      //   2. The file:// URL is an unambiguous absolute path that
+      //      import() can load regardless of CWD.
+      try {
+        const workerPath = moduleRequire.resolve(
+          "pdfjs-dist/legacy/build/pdf.worker.mjs"
+        );
+        mod.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+      } catch (e) {
+        console.warn("[pdf-to-html] Could not resolve pdf.worker.mjs:", e);
+      }
+
       return mod;
     })();
   }
@@ -442,11 +472,12 @@ export async function convertPdfToHtml(
     disableFontFace: true,
     // Don't attempt to use system fonts
     useSystemFonts: false,
-    // Run the parser on the main Node process — no worker setup.
-    // Critical for server-side rendering: without this pdfjs tries
-    // to spin up a fake worker which requires GlobalWorkerOptions.
-    // workerSrc, and under Next.js that path doesn't resolve (the
-    // worker is webpack-bundled to .next/(rsc)/node_modules/...).
+    // Run the parser on the main Node process — no Web Worker thread.
+    // NOTE: disableWorker does NOT skip loading the worker CODE; pdfjs
+    // still dynamic-imports pdf.worker.mjs (set via GlobalWorkerOptions.
+    // workerSrc in getPdfjs()) and runs it on the main thread. This flag
+    // only prevents the creation of a separate Worker thread (which
+    // wouldn't work on Vercel Lambda anyway).
     disableWorker: true,
     // Also disable the modern worker-fetch path so pdfjs doesn't try
     // to dynamic-import the worker module on its own.

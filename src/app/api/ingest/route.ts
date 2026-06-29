@@ -44,7 +44,7 @@ const MAX_RAW_TEXT_LEN = 500_000;
 
 // Paper pipeline: text formats + PDF + Word documents
 // .doc/.docx (Microsoft Word) are routed through mammoth → plain text.
-// .pdf is routed through pdf-parse → plain text.
+// .pdf is routed through pdfjs-dist → structured HTML (preserves layout + images).
 const PAPER_FILE_EXTENSIONS = [
   ".md", ".markdown", ".txt", ".json",
   ".pdf",
@@ -634,91 +634,44 @@ export async function POST(request: NextRequest) {
     }
 
     // PDF-to-HTML conversion (deferred until userId is known for R2 image upload).
-    // Produces structured HTML with headings, paragraphs, and inline images
-    // uploaded to R2. Falls back to pdf-parse plain text on failure.
+    // Produces structured HTML with text at exact PDF coordinates and inline
+    // images uploaded to R2. Uses pdfjs-dist v4 (legacy build) with
+    // disableWorker + GlobalWorkerOptions.workerSrc set to an absolute file://
+    // URL — this is the ONLY PDF parser; there is no fallback.
     //
-    // The whole block is wrapped in a "swallow everything" try/catch so
-    // a single broken PDF never bubbles up and causes the whole POST to
-    // return 500. The worst case is that we end up with an empty
-    // `rawContent` — the project still gets created, the KG pipeline
-    // still runs on whatever we managed to extract, and the user can
-    // see a clear warning in the response telling them the PDF was
-    // unreadable so they can try another file.
+    // The previous pdf-parse fallback was removed because it bundles its own
+    // pdfjs-dist v5 which uses a worker-based architecture incompatible with
+    // Vercel Lambda: the dynamic import of pdf.worker.mjs fails on the
+    // traced/bundled Lambda filesystem. pdf-parse also brought in a SECOND
+    // copy of pdfjs-dist (v5) that conflicted with the project's v4.
+    //
+    // The try/catch ensures a broken PDF doesn't bubble up as a 500. If
+    // parsing fails, rawContent stays empty and the post-parsing guard below
+    // returns a clear 422 error to the client.
     if (pdfBuffer) {
-      // Stage 1: try the rich pdfjs-based converter.
-      let pdfStage1Ok = false;
       try {
         const { convertPdfToHtml } = await import("@/lib/pdf-to-html");
         const result = await convertPdfToHtml(pdfBuffer, { userId });
         if (result.html && result.html.trim().length > 0) {
           rawContent = result.html;
-          pdfStage1Ok = true;
         } else {
-          // pdfjs returned nothing usable (e.g. encrypted PDF, all-image
-          // pages without OCR). Fall through to pdf-parse.
           console.warn(
-            "[ingest] PDF-to-HTML returned empty content, falling back to pdf-parse"
+            "[ingest] PDF-to-HTML returned empty content — PDF may be encrypted or image-only"
+          );
+          ingestionWarnings.push(
+            "PDF was parsed but no text content was found (image-only, encrypted, or empty PDF)."
           );
         }
       } catch (e: any) {
-        // Most common cause on Vercel: pdfjs-dist was bundled by webpack
-        // and the worker .mjs path doesn't resolve at runtime. Adding
-        // pdfjs-dist to serverExternalPackages in next.config.ts fixes
-        // this. Other causes: corrupted PDF, encrypted, or a pdfjs
-        // feature not supported. Log the full error for diagnosis.
         console.error(
-          "[ingest] PDF-to-HTML conversion failed, falling back to pdf-parse:",
+          "[ingest] PDF-to-HTML conversion failed:",
           e?.message || e,
           e?.stack ? "\n" + e.stack : ""
         );
-      }
-
-      // Stage 2: try the lighter pdf-parse (text-only, no images).
-      if (!pdfStage1Ok) {
-        try {
-          const pdfModule: any = await import("pdf-parse");
-          const PDFParseCtor =
-            pdfModule.PDFParse || pdfModule.default?.PDFParse;
-          if (PDFParseCtor) {
-            const parser = new PDFParseCtor({ data: pdfBuffer });
-            try {
-              const result = await parser.getText();
-              const plain = result?.text || "";
-              if (plain.trim().length > 0) {
-                rawContent = plain;
-              } else {
-                console.warn(
-                  "[ingest] pdf-parse returned empty text — PDF appears to be empty or image-only"
-                );
-                ingestionWarnings.push("PDF was parsed but no text content was found (image-only or empty PDF).");
-              }
-            } finally {
-              try {
-                await parser.destroy();
-              } catch {
-                /* best-effort */
-              }
-            }
-          } else {
-            console.error(
-              "[ingest] pdf-parse: PDFParse constructor not found in module exports. Module keys:",
-              Object.keys(pdfModule)
-            );
-            ingestionWarnings.push(
-              "PDF parser library is not available in this deployment environment."
-            );
-          }
-        } catch (e2: any) {
-          console.error(
-            "[ingest] pdf-parse fallback also failed:",
-            e2?.message || e2,
-            e2?.stack ? "\n" + e2.stack : ""
-          );
-          ingestionWarnings.push(
-            "PDF could not be parsed by either the structured or fallback reader. " +
-            (e2?.message ? `Error: ${e2.message}` : "")
-          );
-        }
+        ingestionWarnings.push(
+          "PDF could not be parsed. " +
+          (e?.message ? `Error: ${e.message}` : "")
+        );
       }
       pdfBuffer = null; // free memory
     }
@@ -747,8 +700,8 @@ export async function POST(request: NextRequest) {
       docxBuffer = null; // free memory
     }
 
-    // Post-parsing guard: if we had a PDF/DOCX buffer but both parsing
-    // stages failed and left rawContent empty, bail out NOW instead of
+    // Post-parsing guard: if we had a PDF/DOCX buffer but parsing
+    // failed and left rawContent empty, bail out NOW instead of
     // creating a project shell with empty rawText. Without this, the
     // project gets created, the KG pipeline is triggered, and the user
     // sees a confusing "Project has no raw text to analyze" error from
