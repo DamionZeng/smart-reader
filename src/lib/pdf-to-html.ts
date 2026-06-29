@@ -60,11 +60,58 @@ const OPS_PAINT_INLINE_IMAGE = 87;
 
 // ─── pdfjs dynamic loader ──────────────────────────────
 
+/**
+ * Polyfill browser APIs that pdfjs-dist v4 expects at module load time.
+ *
+ * On Vercel serverless (Node.js without a browser environment), pdfjs
+ * references `DOMMatrix` and `Path2D` during parsing. These are Web APIs
+ * that don't exist in pure Node. Local dev works because some dependency
+ * tree happens to polyfill them, but the production bundle doesn't.
+ *
+ * We install minimal stubs before importing pdfjs so the module loads
+ * cleanly. The stubs implement just enough of the API surface for text
+ * extraction — image rendering / canvas operations are not supported
+ * (and not needed server-side).
+ */
+function installDomPolyfills() {
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    class DOMMatrixStub {
+      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+      m11 = 1; m12 = 0; m21 = 0; m22 = 1; m41 = 0; m42 = 0;
+      constructor() {}
+      multiply() { return new DOMMatrixStub(); }
+      translate() { return new DOMMatrixStub(); }
+      scale() { return new DOMMatrixStub(); }
+      rotate() { return new DOMMatrixStub(); }
+      inverse() { return new DOMMatrixStub(); }
+    }
+    (globalThis as any).DOMMatrix = DOMMatrixStub;
+  }
+  if (typeof globalThis.Path2D === "undefined") {
+    class Path2DStub {
+      constructor() {}
+      moveTo() {} lineTo() {} closePath() {} arc() {}
+      bezierCurveTo() {} quadraticCurveTo() {} rect() {}
+    }
+    (globalThis as any).Path2D = Path2DStub;
+  }
+  if (typeof globalThis.DOMPoint === "undefined") {
+    class DOMPointStub {
+      x = 0; y = 0; z = 0; w = 1;
+      constructor() {}
+    }
+    (globalThis as any).DOMPoint = DOMPointStub;
+  }
+}
+
 let _pdfjsPromise: Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | null = null;
 
 async function getPdfjs() {
   if (!_pdfjsPromise) {
     _pdfjsPromise = (async () => {
+      // Install polyfills BEFORE importing pdfjs so the module's
+      // top-level code can find DOMMatrix etc.
+      installDomPolyfills();
       const mod = await import(
         /* webpackIgnore: true */ "pdfjs-dist/legacy/build/pdf.mjs"
       );
