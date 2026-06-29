@@ -19,10 +19,18 @@ export const auth = betterAuth({
   // better-auth 1.6+ 不再把 baseURL 自动加入 trustedOrigins，
   // 缺少此项会导致 /api/auth/* 的 CORS 预检失败，
   // 浏览器在预检阶段直接抛 "Failed to fetch"。
-  trustedOrigins: [
-    appUrl,
-    publicAppUrl,
-  ],
+  // 接收函数形式并始终放行任意请求的 origin（不做域名限制）。
+  trustedOrigins: async (request) => {
+    if (request) {
+      try {
+        const origin = new URL(request.url).origin;
+        return [origin];
+      } catch {
+        return [appUrl, publicAppUrl];
+      }
+    }
+    return [appUrl, publicAppUrl];
+  },
   emailAndPassword: {
     enabled: true,
     // We do not auto-sign-in after sign-up: the user still has to enter

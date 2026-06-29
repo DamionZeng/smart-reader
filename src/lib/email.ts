@@ -43,11 +43,11 @@ export async function sendVerificationCodeEmail({
     await resend.emails.send({
       from: RESEND_FROM,
       to: email,
-      subject: `${code} — your SmartReader verification code`,
+      subject: `${code} — your Cosmos verification code`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #1C1C1C;">
           <div style="font-family: Georgia, serif; font-size: 24px; font-weight: 600; margin-bottom: 24px;">
-            SmartReader.
+            Cosmos.
           </div>
           <p style="font-size: 14px; line-height: 1.6; color: #1C1C1C; margin: 0 0 24px 0;">
             Use the code below to finish creating your account.
@@ -62,7 +62,7 @@ export async function sendVerificationCodeEmail({
           </p>
         </div>
       `,
-      text: `Your SmartReader verification code is: ${code}\n\nIf you didn't request this, you can ignore this email.`,
+      text: `Your Cosmos verification code is: ${code}\n\nIf you didn't request this, you can ignore this email.`,
     });
   } catch (e) {
     // Don't fail the request when Resend hiccups — the code is still in the
@@ -87,11 +87,11 @@ export async function sendPasswordResetEmail({
     await resend.emails.send({
       from: RESEND_FROM,
       to: email,
-      subject: "Reset your SmartReader password",
+      subject: "Reset your Cosmos password",
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #1C1C1C;">
           <div style="font-family: Georgia, serif; font-size: 24px; font-weight: 600; margin-bottom: 24px;">
-            SmartReader.
+            Cosmos.
           </div>
           <p style="font-size: 14px; line-height: 1.6; color: #1C1C1C; margin: 0 0 24px 0;">
             We received a request to reset your password. Click the link below to set a new one.
@@ -104,7 +104,7 @@ export async function sendPasswordResetEmail({
           </p>
         </div>
       `,
-      text: `Reset your SmartReader password by visiting: ${url}\n\nIf you didn't request this, you can ignore this email.`,
+      text: `Reset your Cosmos password by visiting: ${url}\n\nIf you didn't request this, you can ignore this email.`,
     });
   } catch (e) {
     console.error(`[Email] Resend send failed for ${email}:`, e);

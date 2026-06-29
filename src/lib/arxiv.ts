@@ -127,7 +127,7 @@ export async function fetchArxivMetadata(
   const apiUrl = `http://export.arxiv.org/api/query?id_list=${query}`;
   try {
     const res = await fetch(apiUrl, {
-      headers: { "User-Agent": "smart-reader/1.0" },
+      headers: { "User-Agent": "cosmos/1.0" },
       // 10s cap — arxiv API is fast but rate-limited
       signal: AbortSignal.timeout(10_000),
     });
@@ -223,7 +223,7 @@ export async function downloadPdfFromUrl(
     signal: AbortSignal.timeout(timeout),
     headers: {
       // arxiv + most academic CDNs return PDF for this UA
-      "User-Agent": "smart-reader/1.0 (mailto:dev@smartreader.local)",
+      "User-Agent": "cosmos/1.0 (mailto:dev@cosmos.local)",
       Accept: "application/pdf,*/*;q=0.5",
     },
   });

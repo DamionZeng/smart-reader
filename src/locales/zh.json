@@ -162,7 +162,7 @@
     "legal_title": "法律信息",
     "legal_terms": "服务条款",
     "legal_privacy": "隐私政策",
-    "copyright": "SmartReader. 保留所有权利。",
+    "copyright": "Cosmos. 保留所有权利。",
     "built": "为清晰度而构建。"
   },
   "board": {
@@ -353,7 +353,7 @@
     "notFoundDescription": "此分享链接无效或已被所有者撤销。",
     "error": "加载分享项目失败",
     "readOnly": "只读",
-    "poweredBy": "由 SmartReader 提供支持",
+    "poweredBy": "由 Cosmos 提供支持",
     "by": "作者",
     "untitled": "未命名项目"
   },

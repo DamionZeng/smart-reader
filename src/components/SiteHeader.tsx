@@ -33,7 +33,7 @@ export function SiteHeader() {
               Cosmos
             </span>
             <span className="font-sans text-[10px] uppercase tracking-[0.25em] text-[#1C1C1C]/40 mt-1">
-              SmartReader
+              Reading &amp; Knowledge
             </span>
           </div>
         </Link>

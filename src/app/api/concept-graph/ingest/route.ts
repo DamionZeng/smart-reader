@@ -480,7 +480,7 @@ export async function POST(request: NextRequest) {
         try {
           response = await fetch(fetchUrl, {
             redirect: "follow",
-            headers: { "User-Agent": "SmartReader/1.0" },
+            headers: { "User-Agent": "Cosmos/1.0" },
             signal: controller.signal,
           });
         } finally {

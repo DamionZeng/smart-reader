@@ -162,7 +162,7 @@
     "legal_title": "Legal",
     "legal_terms": "Terms of Service",
     "legal_privacy": "Privacy Policy",
-    "copyright": "SmartReader. All rights reserved.",
+    "copyright": "Cosmos. All rights reserved.",
     "built": "Built for clarity."
   },
   "board": {
@@ -355,7 +355,7 @@
     "notFoundDescription": "This share link is invalid or has been revoked by the owner.",
     "error": "Failed to load shared project",
     "readOnly": "Read-only",
-    "poweredBy": "Powered by SmartReader",
+    "poweredBy": "Powered by Cosmos",
     "by": "by",
     "untitled": "Untitled Project"
   },

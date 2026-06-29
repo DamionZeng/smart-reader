@@ -99,7 +99,7 @@ function SharePageInner({ shareId }: { shareId: string }) {
           href="/"
           className="font-sans text-xs uppercase tracking-[0.2em] text-[#1C1C1C]/60 hover:text-[#1C1C1C] transition-colors"
         >
-          {t("share.poweredBy", "Powered by SmartReader")}
+          {t("share.poweredBy", "Powered by Cosmos")}
         </Link>
       </div>
     );
@@ -115,7 +115,7 @@ function SharePageInner({ shareId }: { shareId: string }) {
           href="/"
           className="mt-8 font-sans text-xs uppercase tracking-[0.2em] text-[#1C1C1C]/60 hover:text-[#1C1C1C] transition-colors"
         >
-          {t("share.poweredBy", "Powered by SmartReader")}
+          {t("share.poweredBy", "Powered by Cosmos")}
         </Link>
       </div>
     );
@@ -196,7 +196,7 @@ function SharePageInner({ shareId }: { shareId: string }) {
           href="/"
           className="font-sans text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 hover:text-[#1C1C1C] transition-colors"
         >
-          {t("share.poweredBy", "Powered by SmartReader")}
+          {t("share.poweredBy", "Powered by Cosmos")}
         </Link>
       </div>
     </div>

@@ -13,7 +13,7 @@ export function FooterSection() {
           data-fade
           className="font-serif text-2xl tracking-tight font-bold"
         >
-          SmartReader.
+          Cosmos.
         </div>
         <p data-fade className="font-sans text-xs text-[#1C1C1C]/40">
           {t("footer.copyright")}

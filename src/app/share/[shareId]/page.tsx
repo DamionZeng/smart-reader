@@ -267,7 +267,7 @@ function SharePageInner({ shareId }: { shareId: string }) {
           />
         </ReactFlow>
 
-        {/* Powered by SmartReader */}
+        {/* Powered by Cosmos */}
         <div className="absolute bottom-4 right-6 z-10">
           <Link
             href="/"
