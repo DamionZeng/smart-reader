@@ -27,6 +27,12 @@ import {
 import { safeTruncateHtml, stripHtml, isHtml } from "@/utils/html-utils";
 import { generateProjectTitle } from "@/lib/graph/title-gen";
 
+// Vercel serverless function config: PDF parsing + R2 upload + LLM title
+// generation can easily exceed the default 10s Hobby timeout.
+// 60s is the max for Pro plans; Hobby plans cap at 10s (this setting
+// is a no-op there — the platform enforces its own limit).
+export const maxDuration = 60;
+
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // 6 MB per image (base64 inflates ~33%)
 /**
  * Max stored HTML length for rawText. PDFs with many figures can
@@ -655,13 +661,15 @@ export async function POST(request: NextRequest) {
           );
         }
       } catch (e: any) {
-        // Most common cause: pdfjs fails to load the document because
-        // the file is corrupted, encrypted, or uses a feature pdfjs
-        // doesn't support. Don't let this abort the whole request —
-        // try pdf-parse next.
+        // Most common cause on Vercel: pdfjs-dist was bundled by webpack
+        // and the worker .mjs path doesn't resolve at runtime. Adding
+        // pdfjs-dist to serverExternalPackages in next.config.ts fixes
+        // this. Other causes: corrupted PDF, encrypted, or a pdfjs
+        // feature not supported. Log the full error for diagnosis.
         console.error(
           "[ingest] PDF-to-HTML conversion failed, falling back to pdf-parse:",
-          e?.message || e
+          e?.message || e,
+          e?.stack ? "\n" + e.stack : ""
         );
       }
 
@@ -693,16 +701,22 @@ export async function POST(request: NextRequest) {
             }
           } else {
             console.error(
-              "[ingest] pdf-parse: PDFParse constructor not found in module, skipping fallback"
+              "[ingest] pdf-parse: PDFParse constructor not found in module exports. Module keys:",
+              Object.keys(pdfModule)
+            );
+            ingestionWarnings.push(
+              "PDF parser library is not available in this deployment environment."
             );
           }
         } catch (e2: any) {
           console.error(
             "[ingest] pdf-parse fallback also failed:",
-            e2?.message || e2
+            e2?.message || e2,
+            e2?.stack ? "\n" + e2.stack : ""
           );
           ingestionWarnings.push(
-            "PDF could not be parsed by either the structured or fallback reader. The project will be created with empty content."
+            "PDF could not be parsed by either the structured or fallback reader. " +
+            (e2?.message ? `Error: ${e2.message}` : "")
           );
         }
       }
@@ -731,6 +745,23 @@ export async function POST(request: NextRequest) {
         }
       }
       docxBuffer = null; // free memory
+    }
+
+    // Post-parsing guard: if we had a PDF/DOCX buffer but both parsing
+    // stages failed and left rawContent empty, bail out NOW instead of
+    // creating a project shell with empty rawText. Without this, the
+    // project gets created, the KG pipeline is triggered, and the user
+    // sees a confusing "Project has no raw text to analyze" error from
+    // /api/concept-graph/ingest — with an orphaned empty project left
+    // behind in the dashboard.
+    if (!rawContent.trim()) {
+      const reason = ingestionWarnings.length
+        ? ingestionWarnings.join(" ")
+        : "The document could not be parsed. No text content was extracted.";
+      return NextResponse.json(
+        { error: reason },
+        { status: 422 }
+      );
     }
 
     // Track usage (non-fatal)

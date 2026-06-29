@@ -12,6 +12,13 @@ import { ingestPaper } from "@/lib/graph/ingest-paper";
 import { ingestCode } from "@/lib/graph/ingest-code";
 import type { JobProgress } from "@/types/concept-graph";
 
+// Vercel serverless function config: the KG pipeline runs 3 parallel LLM
+// calls that can take 30-60s. The `after()` callback runs in the same
+// serverless invocation, so the function must stay alive long enough
+// for the pipeline to complete (or at least reach the first progress
+// checkpoint).
+export const maxDuration = 60;
+
 /**
  * Sentinel error used to signal "the user cancelled this job" from
  * inside the pipeline. Thrown by the cancellation check at the
@@ -376,7 +383,10 @@ export async function POST(request: NextRequest) {
       }
       if (!doc.rawText || !doc.rawText.trim()) {
         return NextResponse.json(
-          { error: "Project has no raw text to analyze. Please ingest content first." },
+          {
+            error:
+              "This project has no parsed content yet. Re-import the original file or URL from the import page to extract text before generating a knowledge graph.",
+          },
           { status: 400 }
         );
       }
