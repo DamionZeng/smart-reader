@@ -15,54 +15,47 @@
 import { escapeHtml } from "@/utils/html-utils";
 import { uploadImage, isR2Configured } from "@/lib/storage";
 import { PNG } from "pngjs";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 
-// ─── CRITICAL: Static import for Vercel nft tracing ───
+// ─── CRITICAL: Static imports for Vercel nft tracing ───
 //
-// A STATIC import (not dynamic import()) is required so that Vercel's
-// Node File Tracer (@vercel/nft) can statically detect and include
-// pdfjs-dist/legacy/build/pdf.mjs in the Lambda bundle. Dynamic
-// import() with `/* webpackIgnore: true */` is NOT statically
-// traceable by nft, so the file was missing from the Lambda — causing
-// "Cannot find module" at runtime.
+// Both the main pdfjs module AND the worker module MUST be imported
+// statically (not via dynamic import()) so that Vercel's Node File
+// Tracer (@vercel/nft) can detect them and include the .mjs files in
+// the Lambda bundle. Dynamic import() with `/* webpackIgnore: true */`
+// is NOT statically traceable by nft.
 //
 // `serverExternalPackages: ["pdfjs-dist"]` in next.config.ts ensures
-// webpack leaves this import external (native ESM import), so the .mjs
-// file is loaded directly by Node.js at runtime.
-//
-// Polyfills (DOMMatrix etc.) are NOT needed at import time — pdfjs-dist
-// v4's top-level code only defines functions; DOMMatrix/Path2D are
-// referenced inside functions called during getDocument(). We install
-// polyfills in convertPdfToHtml() before calling getDocument().
+// webpack leaves these imports external (native ESM), so the .mjs
+// files are loaded directly by Node.js at runtime.
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// @ts-expect-error — pdf.worker.mjs has no TypeScript declarations;
+// it exports WorkerMessageHandler at runtime (verified in source).
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
-// Native require for resolving pdfjs worker path at runtime.
-const moduleRequire = createRequire(import.meta.url);
-
-// ─── Set GlobalWorkerOptions.workerSrc at module load time ───
+// ─── CRITICAL: Register worker on globalThis ───
 //
-// pdfjs-dist v4 ALWAYS loads the worker code via dynamic import()
-// — there is no way to skip it. The worker runs on the main thread
-// in "fake worker" mode (no separate Web Worker thread is created
-// in Node.js).
+// pdfjs-dist v4's PDFWorker._initialize() checks two things before
+// attempting to create a real Web Worker (which fails in Node.js):
+//   1. `PDFWorker.#isWorkerDisabled`
+//   2. `PDFWorker.#mainThreadWorkerMessageHandler` — which reads from
+//      `globalThis.pdfjsWorker?.WorkerMessageHandler`
 //
-// By default, workerSrc is a relative path ("./pdf.worker.mjs")
-// resolved relative to the importing module. This fails on Vercel
-// Lambda because the CWD is different. Setting it to an absolute
-// file:// URL via require.resolve() fixes this.
+// If `globalThis.pdfjsWorker.WorkerMessageHandler` is set, pdfjs skips
+// BOTH the `new Worker()` attempt AND the `import(this.workerSrc)`
+// dynamic import — it uses the already-loaded WorkerMessageHandler
+// directly in "fake worker" mode (running on the main thread).
 //
-// `require.resolve()` with a string literal is also statically
-// detectable by @vercel/nft, so the worker file gets included in
-// the Lambda bundle.
-try {
-  const workerPath = moduleRequire.resolve(
-    "pdfjs-dist/legacy/build/pdf.worker.mjs"
-  );
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-} catch (e) {
-  console.warn("[pdf-to-html] Could not resolve pdf.worker.mjs:", e);
-}
+// This is the ONLY way to make pdfjs-dist v4 work on Vercel Lambda,
+// because:
+//   - `new Worker(workerSrc)` fails (no Web Worker API in Node.js)
+//   - The fallback `import(/*webpackIgnore: true*/this.workerSrc)`
+//     uses a runtime variable `this.workerSrc` that nft cannot
+//     statically trace, so the worker file is missing from the
+//     Lambda bundle.
+//
+// By statically importing the worker and registering it on
+// globalThis, we bypass both code paths entirely.
+(globalThis as any).pdfjsWorker = pdfjsWorker;
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -457,18 +450,21 @@ export async function convertPdfToHtml(
     disableFontFace: true,
     // Don't attempt to use system fonts
     useSystemFonts: false,
-    // Disable the modern worker-fetch path so pdfjs uses the
-    // workerSrc we set via GlobalWorkerOptions (absolute file:// URL)
-    // instead of trying to fetch the worker from a URL.
+    // Disable the modern worker-fetch path — we use the statically
+    // imported worker registered on globalThis.pdfjsWorker.
     useWorkerFetch: false,
   });
 
   let pdfDoc: any;
   try {
     pdfDoc = await loadingTask.promise;
-  } catch (err) {
-    console.error("[pdf-to-html] Failed to load PDF document:", err);
-    throw new Error("Failed to parse the PDF file. The file may be corrupted.");
+  } catch (err: any) {
+    // Preserve the original error message for diagnosis — pdfjs errors
+    // contain useful info (e.g. "Setting up fake worker failed: ...",
+    // "Invalid PDF structure", password-protected, etc.)
+    const detail = err?.message || String(err);
+    console.error("[pdf-to-html] Failed to load PDF document:", detail, err?.stack ? "\n" + err.stack : "");
+    throw new Error(`Failed to parse the PDF file: ${detail}`);
   }
 
   const pageCount = Math.min(pdfDoc.numPages, maxPages);
