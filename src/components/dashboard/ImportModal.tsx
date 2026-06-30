@@ -32,7 +32,9 @@ export function ImportModal({ type, onClose, onSubmitted }: ImportModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const parserUrl = process.env.NEXT_PUBLIC_PARSER_URL || "http://localhost:8000";
+  // 走 Vercel rewrites 反向代理（vercel.json 里 /parser/(.*) → http://47.239.249.167:30008/$1）
+  // 生产环境无需配置 NEXT_PUBLIC_PARSER_URL；本地开发若直接连 Python 服务可设置此变量
+  const parserUrl = process.env.NEXT_PUBLIC_PARSER_URL || "/parser";
 
   const handleIngest = async (name: string, url: string, file: File | null) => {
     if (!session?.user?.id) {
