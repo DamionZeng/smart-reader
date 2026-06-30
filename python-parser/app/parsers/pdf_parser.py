@@ -144,11 +144,19 @@ def _extract_text_lines(page: fitz.Page) -> list[_TextLine]:
 
 
 def _build_image_html(img: _ImageEntry) -> str:
-    """构建图片 HTML。对应 TS 版本的 <img> 标签。
+    """构建图片 HTML。
 
-    关键:width/height 必须是页面坐标系里的**渲染尺寸**（即 bbox 尺寸），
-    而不是原始图片像素尺寸——否则 `max-width:100%` 会让图片按原始像素
-    等比缩放到页面宽度,远超实际渲染框,盖住后面的文字。
+    关键设计：
+    1. width/height 来自 page.get_image_bbox()，是 PDF 页面坐标系里
+       图片+周围元素的占位框（PyMuPDF 返回值可能包含刻度标签、
+       坐标轴文字等），但**不含**图表下方的 (a)(b) 子图说明文字——
+       说明文字是独立的文本 span。
+    2. 必须把**所有文字**渲染在图片之上，否则子图说明文字会被
+       后续子图的图片覆盖（中文期刊版面：5 个子图 (a)-(e) 排成
+       两行，每个子图下方有 (a) 高辉等[7]提出的方法 这种说明，
+       这些文字在 PyMuPDF 里是独立 line，但渲染顺序在图片之后
+       就被覆盖）。所以 _build_page_html 现在先渲染所有图片
+       再渲染所有文字，文字 z-index:2 > 图片 z-index:1。
     """
     return (
         f'  <img src="{img.url}" alt="{escape_html(img.alt)}" '
@@ -166,9 +174,12 @@ def _build_page_html(
 ) -> str:
     """构建单页 HTML，结构与 TS 版本 buildPageHtml 对齐。
 
-    `lines` 是 PyMuPDF 原生 line 结构（不重新分组），每个 line 有自己的
-    bbox 和 spans。每个 line 渲染为一个带明确 bbox 的 div，div 内 span
-    用相对绝对定位保留 PDF 原始 x 坐标。
+    渲染顺序：**图片 → 文字**（不是 TS 版本的文字→图片）。
+    原因：中文论文版面里子图 (a)(b) 说明文字、子图标题、图注、
+    参考文献编号经常紧跟在图片下方或与图片 bbox 重叠。如果
+    按 TS 版本先渲染文字再渲染图片，后续子图的图片会盖住前面
+    的子图说明文字。改为先全部图片后全部文字，让所有文字都
+    渲染在图片之上（文字 z-index:2 > 图片 z-index:1）。
     """
     if not lines and not images:
         return ""
@@ -180,10 +191,10 @@ def _build_page_html(
         f'style="position:relative;width:{page_width:.1f}px;height:{page_height:.1f}px;'
         f'background:white;margin:0 auto 24px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">'
     )
-    # 图片先渲染（低 z-index，文字在上层）
+    # 先渲染所有图片（低 z-index，在底层）
     for img in images:
         parts.append(_build_image_html(img))
-    # 文本行
+    # 再渲染所有文字（高 z-index，永远在图片之上）
     for line in lines:
         if not any(s.text.strip() for s in line.spans):
             continue
