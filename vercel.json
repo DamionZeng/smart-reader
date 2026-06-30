@@ -1,0 +1,13 @@
+{
+  "rewrites": [
+    { "source": "/parser/(.*)", "destination": "http://47.239.249.167:30008/$1" }
+  ],
+  "headers": [
+    {
+      "source": "/parser/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store" }
+      ]
+    }
+  ]
+}
