@@ -110,12 +110,10 @@ function CodeBoardPageInner() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get("id");
 
-  // No id in the URL → redirect to the dedicated import page. The
-  // import state machine lives at /code-import so this page only deals
-  // with the canvas view.
+  // No id in the URL → redirect to dashboard where the import modal lives.
   useEffect(() => {
     if (!projectId) {
-      router.replace("/code-import");
+      router.replace("/dashboard");
     }
   }, [projectId, router]);
 

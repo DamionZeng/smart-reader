@@ -11,6 +11,15 @@ export interface ProjectSummary {
   tags?: Array<{ id: string; name: string }>;
   /** Tier 2: data-URL thumbnail of the source image (only set for image-type projects) */
   thumbnail?: string | null;
+  /** Python backend parse status. Defaults to 'ready' for legacy rows / nextjs backend. */
+  status?: "parsing" | "ready" | "failed";
+  /** Real-time KG pipeline progress; only present when status === 'parsing'. */
+  parseProgress?: {
+    step: string;
+    current: number;
+    total: number;
+    jobStatus?: string;
+  } | null;
 }
 
 export interface ProjectDetail {

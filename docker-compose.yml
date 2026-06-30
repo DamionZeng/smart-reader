@@ -65,6 +65,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # Python FastAPI 解析服务：PDF/DOCX 解析 + langgraph KG Agent。
+  # 本地开发可通过 `docker compose up -d python-parser` 启动；
+  # 在 Next.js 项目 .env 中设置 PARSER_BACKEND=python + PARSER_SERVICE_URL=http://localhost:8000
+  # 即可让 Next.js 路由把解析请求转发到这里。
+  python-parser:
+    profiles: ["parser"]
+    build: ./python-parser
+    container_name: smart-reader-python-parser
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # 覆盖 .env 中的 DATABASE_URL，使用 docker 内网地址直连 postgres。
+      # 如需连接 Neon 云数据库，注释掉此行即可。
+      DATABASE_URL: postgresql://smartreader:smartreader@postgres:5432/smartreader
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
     name: smart-reader-postgres-data

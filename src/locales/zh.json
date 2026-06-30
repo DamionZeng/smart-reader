@@ -377,6 +377,9 @@
       "cta": "创建第一个项目"
     },
     "project": "项目 {{index}}",
+    "parsing": "解析中",
+    "parsingFailed": "解析失败",
+    "cancelParsing": "取消解析",
     "deleteTitle": "删除项目",
     "deleteConfirm": "确定要删除「{{title}}」吗？此操作不可撤销，所有节点和连线将永久丢失。",
     "deleteCancel": "取消",
