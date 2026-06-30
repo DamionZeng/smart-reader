@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,8 @@ import { useSession } from "@/lib/auth-client";
 import { ProjectType } from "@/types";
 import { ProjectOrganizationDialog } from "@/components/dashboard/ProjectOrganizationDialog";
 import { GlobalKnowledgeGraph } from "@/components/dashboard/GlobalKnowledgeGraph";
+import { ParsingProjectCard } from "@/components/dashboard/ParsingProjectCard";
+import { ImportModal } from "@/components/dashboard/ImportModal";
 import type { Folder, Tag } from "@/api/organization";
 import { cn } from "@/utils/cn";
 import "@/i18n";
@@ -76,6 +78,8 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTypeSelector, setShowTypeSelector] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importType, setImportType] = useState<ProjectType>("paper");
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   // Incremented after mutations that change the global graph (e.g.
@@ -131,6 +135,85 @@ export default function DashboardPage() {
     };
   }, [session?.user]);
 
+  // === Polling for parsing projects (Python backend) ===
+  // When the Python backend is in use, the /parse endpoint returns
+  // immediately with status='parsing' and the KG pipeline runs in the
+  // background. To surface live progress on the dashboard, we re-fetch
+  // /api/projects every 3s while any project is in 'parsing' status,
+  // and stop the moment all of them reach a terminal state. The final
+  // fetch also bumps graphRefreshKey so the global knowledge graph
+  // picks up the newly-generated concepts.
+  useEffect(() => {
+    if (!projects) return;
+    const hasParsing = projects.some((p) => p.status === "parsing");
+    if (!hasParsing) return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const data = await listProjects();
+        if (cancelled) return;
+        setProjects(data);
+        if (!data.some((p) => p.status === "parsing")) {
+          // All parsing projects reached a terminal state — refresh
+          // the global graph so new concepts appear.
+          setGraphRefreshKey((k) => k + 1);
+        }
+      } catch {
+        // Silent retry on next tick — transient errors shouldn't
+        // surface as dashboard error toasts.
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [projects]);
+
+  // 取消正在解析的项目:调用 Next.js cancel 接口更新数据库状态
+  // (job.status='cancelled' + documents.status='failed')。Python 后台
+  // 任务在下一个 onProgress 边界检测到 cancelled 标志后静默退出。
+  // 保留 project(状态为 failed),用户可重新解析或删除。
+  // 必须放在 early return 之前,避免违反 Rules of Hooks
+  // (sessionPending 切换时 hook 顺序变化)。
+  const handleCancelParsing = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/projects/${id}/cancel`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "Failed to cancel");
+        }
+        // 刷新项目列表,卡片状态从 parsing 变为 failed
+        const data = await listProjects();
+        setProjects(data);
+      } catch (err: any) {
+        setError(err.message || "Failed to cancel parsing project");
+      }
+    },
+    []
+  );
+
+  // 删除 parsing/failed 状态的项目(从 ParsingProjectCard 的删除按钮触发)。
+  // 直接调用 deleteProject,不走确认弹窗——failed 卡片本身已表达状态,
+  // 用户点击 Trash2 即为明确意图。
+  const handleDeleteParsing = useCallback(
+    async (id: string) => {
+      try {
+        await deleteProject(id);
+        setProjects((prev) =>
+          prev ? prev.filter((p) => p.id !== id) : prev
+        );
+        setGraphRefreshKey((k) => k + 1);
+      } catch (err: any) {
+        setError(err.message || "Failed to delete project");
+      }
+    },
+    []
+  );
+
   if (sessionPending || !session?.user) {
     return (
       <div className="min-h-screen bg-[#F9F8F6] text-[#1C1C1C] flex items-center justify-center">
@@ -141,12 +224,11 @@ export default function DashboardPage() {
 
   const handleSelectType = (type: ProjectType) => {
     setShowTypeSelector(false);
-    // Send the user straight to the dedicated import page so the import
-    // state machine (which owns parsing + the 7-step KG pipeline + job
-    // polling) has its own URL. The board/codeboard pages no longer host
-    // the import UI; they redirect to /import or /code-import when no
-    // project id is present.
-    router.push(type === "code" ? "/code-import" : "/import");
+    // 直接在 dashboard 上弹出导入弹窗,不再跳转到 /import 页面。
+    // 弹窗直接调用 Python /parse 服务,提交后关闭弹窗,
+    // dashboard 轮询显示解析进度。
+    setImportType(type);
+    setShowImportModal(true);
   };
 
   const handleConfirmDelete = async () => {
@@ -425,6 +507,8 @@ export default function DashboardPage() {
               compareMode={compareMode}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
+              onCancelParsing={handleCancelParsing}
+              onDeleteParsing={handleDeleteParsing}
             />
           )}
         </div>
@@ -571,6 +655,19 @@ export default function DashboardPage() {
         <TypeSelectorModal
           onSelect={handleSelectType}
           onClose={() => setShowTypeSelector(false)}
+        />
+      )}
+
+      {/* Import Modal — 直接调用 Python /parse 服务 */}
+      {showImportModal && (
+        <ImportModal
+          type={importType}
+          onClose={() => setShowImportModal(false)}
+          onSubmitted={() => {
+            setShowImportModal(false);
+            // 立即刷新项目列表,让 parsing 状态的卡片出现
+            listProjects().then((data) => setProjects(data)).catch(() => {});
+          }}
         />
       )}
 
@@ -759,6 +856,8 @@ function ProjectContent({
   compareMode,
   selectedIds,
   onToggleSelect,
+  onCancelParsing,
+  onDeleteParsing,
 }: {
   projects: ProjectSummary[];
   filterFolderId: string | null;
@@ -771,6 +870,8 @@ function ProjectContent({
   compareMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onCancelParsing?: (id: string) => void;
+  onDeleteParsing?: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const hasFilter = filterFolderId !== null || filterTagId !== null;
@@ -874,6 +975,8 @@ function ProjectContent({
           compareMode={compareMode}
           selectedIds={selectedIds}
           onToggleSelect={onToggleSelect}
+          onCancelParsing={onCancelParsing}
+          onDeleteParsing={onDeleteParsing}
         />
       )}
     </div>
@@ -911,6 +1014,8 @@ function ProjectGrid({
   compareMode,
   selectedIds,
   onToggleSelect,
+  onCancelParsing,
+  onDeleteParsing,
 }: {
   projects: ProjectSummary[];
   onDelete: (p: ProjectSummary) => void;
@@ -918,6 +1023,8 @@ function ProjectGrid({
   compareMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onCancelParsing?: (id: string) => void;
+  onDeleteParsing?: (id: string) => void;
 }) {
   const { t, i18n } = useTranslation();
 
@@ -933,6 +1040,19 @@ function ProjectGrid({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-[#1C1C1C]/10 border border-[#1C1C1C]/10">
       {uniqueProjects.map((p, i) => {
+        // Parsing projects (Python backend) render as a non-clickable
+        // progress card. They have no board to open yet — the KG
+        // pipeline is still running in the background.
+        if (p.status === "parsing" || p.status === "failed") {
+          return (
+            <ParsingProjectCard
+              key={p.id}
+              project={p}
+              onCancel={(id) => onCancelParsing?.(id)}
+              onDelete={(id) => onDeleteParsing?.(id)}
+            />
+          );
+        }
         const date = new Date(p.createdAt);
         const dateStr = date.toLocaleDateString(
           i18n.language.startsWith("zh") ? "zh-CN" : "en-US",

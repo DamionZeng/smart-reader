@@ -5,7 +5,9 @@
  * producing structured HTML that preserves the document's formatting
  * (headings, paragraphs, lists) and inline images (uploaded to R2).
  *
- * Used by /api/ingest to replace the old pdf-parse plain-text extraction.
+ * Used by /api/ingest as the sole PDF parser (the old pdf-parse fallback
+ * was removed — it bundled its own pdfjs-dist v5 whose worker-based
+ * architecture is incompatible with Vercel Lambda).
  * The resulting HTML is stored as rawText; the KG pipeline calls
  * stripHtml() to get plain text for LLM processing.
  */
@@ -13,6 +15,47 @@
 import { escapeHtml } from "@/utils/html-utils";
 import { uploadImage, isR2Configured } from "@/lib/storage";
 import { PNG } from "pngjs";
+
+// ─── CRITICAL: Static imports for Vercel nft tracing ───
+//
+// Both the main pdfjs module AND the worker module MUST be imported
+// statically (not via dynamic import()) so that Vercel's Node File
+// Tracer (@vercel/nft) can detect them and include the .mjs files in
+// the Lambda bundle. Dynamic import() with `/* webpackIgnore: true */`
+// is NOT statically traceable by nft.
+//
+// `serverExternalPackages: ["pdfjs-dist"]` in next.config.ts ensures
+// webpack leaves these imports external (native ESM), so the .mjs
+// files are loaded directly by Node.js at runtime.
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// @ts-expect-error — pdf.worker.mjs has no TypeScript declarations;
+// it exports WorkerMessageHandler at runtime (verified in source).
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
+
+// ─── CRITICAL: Register worker on globalThis ───
+//
+// pdfjs-dist v4's PDFWorker._initialize() checks two things before
+// attempting to create a real Web Worker (which fails in Node.js):
+//   1. `PDFWorker.#isWorkerDisabled`
+//   2. `PDFWorker.#mainThreadWorkerMessageHandler` — which reads from
+//      `globalThis.pdfjsWorker?.WorkerMessageHandler`
+//
+// If `globalThis.pdfjsWorker.WorkerMessageHandler` is set, pdfjs skips
+// BOTH the `new Worker()` attempt AND the `import(this.workerSrc)`
+// dynamic import — it uses the already-loaded WorkerMessageHandler
+// directly in "fake worker" mode (running on the main thread).
+//
+// This is the ONLY way to make pdfjs-dist v4 work on Vercel Lambda,
+// because:
+//   - `new Worker(workerSrc)` fails (no Web Worker API in Node.js)
+//   - The fallback `import(/*webpackIgnore: true*/this.workerSrc)`
+//     uses a runtime variable `this.workerSrc` that nft cannot
+//     statically trace, so the worker file is missing from the
+//     Lambda bundle.
+//
+// By statically importing the worker and registering it on
+// globalThis, we bypass both code paths entirely.
+(globalThis as any).pdfjsWorker = pdfjsWorker;
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -58,34 +101,50 @@ const OPS_TRANSFORM = 15;
 const OPS_PAINT_IMAGE_XOBJECT = 85;
 const OPS_PAINT_INLINE_IMAGE = 87;
 
-// ─── pdfjs dynamic loader ──────────────────────────────
+// ─── DOM polyfills for server-side pdfjs ──────────────
 
-let _pdfjsPromise: Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | null = null;
-
-async function getPdfjs() {
-  if (!_pdfjsPromise) {
-    _pdfjsPromise = (async () => {
-      const mod = await import(
-        /* webpackIgnore: true */ "pdfjs-dist/legacy/build/pdf.mjs"
-      );
-      // We run server-side in Node, so we never need a real Web Worker.
-      // Pass `useWorkerFetch: false` and `isEvalSupported: false` plus
-      // `disableWorker: true` on getDocument() to keep pdfjs in the
-      // main process. The legacy import (vs the modern build) already
-      // supports a "fake worker" mode, but the fake worker still
-      // requires `GlobalWorkerOptions.workerSrc` to point at a real
-      // file on disk — and under Next.js RSC the worker .mjs lives in
-      // a webpack-bundled path like `/.next/(rsc)/node_modules/...`
-      // that `createRequire(import.meta.url).resolve()` can't find
-      // (it returns the unbundled node_modules path instead). Setting
-      // `GlobalWorkerOptions.workerSrc = ""` here would trip the
-      // "No workerSrc specified" guard, so we leave it untouched and
-      // rely on the per-task `disableWorker: true` below to skip the
-      // fake-worker init entirely. That's the documented Node usage.
-      return mod;
-    })();
+/**
+ * Polyfill browser APIs that pdfjs-dist v4 calls during getDocument().
+ *
+ * On Vercel serverless (Node.js 20 without browser APIs), pdfjs calls
+ * `new DOMMatrix()` and `new Path2D()` during text/image extraction.
+ * These Web APIs don't exist in pure Node 20. We install minimal stubs
+ * before calling getDocument() so the parsing code doesn't crash.
+ *
+ * Note: pdfjs-dist v4's module top-level code does NOT reference these
+ * APIs — they're only used inside functions called during parsing. So
+ * the static import succeeds without polyfills; we just need them
+ * before getDocument() is called.
+ */
+function installDomPolyfills() {
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    class DOMMatrixStub {
+      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+      m11 = 1; m12 = 0; m21 = 0; m22 = 1; m41 = 0; m42 = 0;
+      constructor() {}
+      multiply() { return new DOMMatrixStub(); }
+      translate() { return new DOMMatrixStub(); }
+      scale() { return new DOMMatrixStub(); }
+      rotate() { return new DOMMatrixStub(); }
+      inverse() { return new DOMMatrixStub(); }
+    }
+    (globalThis as any).DOMMatrix = DOMMatrixStub;
   }
-  return _pdfjsPromise;
+  if (typeof globalThis.Path2D === "undefined") {
+    class Path2DStub {
+      constructor() {}
+      moveTo() {} lineTo() {} closePath() {} arc() {}
+      bezierCurveTo() {} quadraticCurveTo() {} rect() {}
+    }
+    (globalThis as any).Path2D = Path2DStub;
+  }
+  if (typeof globalThis.DOMPoint === "undefined") {
+    class DOMPointStub {
+      x = 0; y = 0; z = 0; w = 1;
+      constructor() {}
+    }
+    (globalThis as any).DOMPoint = DOMPointStub;
+  }
 }
 
 // ─── Image extraction helpers ──────────────────────────
@@ -372,7 +431,6 @@ function buildPageHtml(
  * - Text is extracted with positioning and grouped into headings/paragraphs/lists
  * - Embedded images are extracted, converted to PNG, and uploaded to R2
  * - If R2 is not configured, images are skipped (text-only HTML)
- * - Falls back to basic text extraction if pdfjs fails
  */
 export async function convertPdfToHtml(
   buffer: Buffer,
@@ -381,37 +439,32 @@ export async function convertPdfToHtml(
   const { userId, maxPages = 80 } = options;
   const r2Ready = isR2Configured();
 
-  let pdfjs: any;
-  try {
-    pdfjs = await getPdfjs();
-  } catch (err) {
-    console.error("[pdf-to-html] Failed to load pdfjs-dist:", err);
-    throw new Error("PDF parser library is unavailable on the server.");
-  }
+  // Install DOM polyfills before calling getDocument() — pdfjs calls
+  // `new DOMMatrix()` and `new Path2D()` during parsing, which don't
+  // exist in Node.js 20 (Vercel Lambda runtime).
+  installDomPolyfills();
 
-  const loadingTask = pdfjs.getDocument({
+  const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
     // Disable font loading (not needed for text extraction)
     disableFontFace: true,
     // Don't attempt to use system fonts
     useSystemFonts: false,
-    // Run the parser on the main Node process — no worker setup.
-    // Critical for server-side rendering: without this pdfjs tries
-    // to spin up a fake worker which requires GlobalWorkerOptions.
-    // workerSrc, and under Next.js that path doesn't resolve (the
-    // worker is webpack-bundled to .next/(rsc)/node_modules/...).
-    disableWorker: true,
-    // Also disable the modern worker-fetch path so pdfjs doesn't try
-    // to dynamic-import the worker module on its own.
+    // Disable the modern worker-fetch path — we use the statically
+    // imported worker registered on globalThis.pdfjsWorker.
     useWorkerFetch: false,
   });
 
   let pdfDoc: any;
   try {
     pdfDoc = await loadingTask.promise;
-  } catch (err) {
-    console.error("[pdf-to-html] Failed to load PDF document:", err);
-    throw new Error("Failed to parse the PDF file. The file may be corrupted.");
+  } catch (err: any) {
+    // Preserve the original error message for diagnosis — pdfjs errors
+    // contain useful info (e.g. "Setting up fake worker failed: ...",
+    // "Invalid PDF structure", password-protected, etc.)
+    const detail = err?.message || String(err);
+    console.error("[pdf-to-html] Failed to load PDF document:", detail, err?.stack ? "\n" + err.stack : "");
+    throw new Error(`Failed to parse the PDF file: ${detail}`);
   }
 
   const pageCount = Math.min(pdfDoc.numPages, maxPages);

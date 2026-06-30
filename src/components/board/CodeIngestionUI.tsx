@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Upload, Github, ArrowRight, X, FileCode } from "lucide-react";
+import { Upload, ArrowRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/utils/cn";
 import { IngestionFlow, IngestionStage } from "@/components/board/IngestionFlow";
@@ -156,8 +156,8 @@ export function CodeIngestionUI({
   const form = (
     <div
       className={cn(
-        "w-full p-8 bg-white/50 backdrop-blur border border-[#1C1C1C]/10 animate-in fade-in zoom-in duration-500",
-        isModal ? "max-w-xl" : "max-w-2xl"
+        "w-full p-8 md:p-12 bg-[#F9F8F6] border border-[#1C1C1C]/10 animate-in fade-in zoom-in duration-500",
+        isModal ? "max-w-3xl" : "max-w-2xl"
       )}
     >
       <div className="mb-8 flex items-start justify-between gap-4">
@@ -183,61 +183,55 @@ export function CodeIngestionUI({
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Name input */}
-        <div className="space-y-2">
+        <div className="space-y-3">
           <label
             htmlFor="code-ingest-name"
-            className="block text-[10px] uppercase tracking-widest text-[#1C1C1C]/40 font-mono"
+            className="block text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 font-mono"
           >
             {t("codeIngest.nameLabel")}
           </label>
-          <div className="relative">
-            <FileCode className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#1C1C1C]/40" />
-            <input
-              id="code-ingest-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("codeIngest.namePlaceholder")}
-              maxLength={255}
-              disabled={loading}
-              className="w-full bg-[#F9F8F6] border border-[#1C1C1C]/10 py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-[#1C1C1C]/40 transition-colors placeholder:text-[#1C1C1C]/30"
-            />
-          </div>
+          <input
+            id="code-ingest-name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("codeIngest.namePlaceholder")}
+            maxLength={255}
+            disabled={loading}
+            className="w-full bg-transparent border-0 border-b border-[#1C1C1C]/20 py-3 text-sm focus:outline-none focus:border-[#1C1C1C] transition-colors placeholder:text-[#1C1C1C]/30 disabled:opacity-50"
+          />
         </div>
 
         {/* GitHub URL input */}
-        <div className="space-y-2">
+        <div className="space-y-3">
           <label
             htmlFor="code-ingest-url"
-            className="block text-[10px] uppercase tracking-widest text-[#1C1C1C]/40 font-mono"
+            className="block text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 font-mono"
           >
             {t("codeIngest.urlLabel")}
           </label>
-          <div className="relative">
-            <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#1C1C1C]/40" />
-            <input
-              id="code-ingest-url"
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder={t("codeIngest.urlPlaceholder")}
-              disabled={!!file || loading}
-              className="w-full bg-[#F9F8F6] border border-[#1C1C1C]/10 py-3 pl-12 pr-4 text-sm focus:outline-none focus:border-[#1C1C1C]/40 transition-colors placeholder:text-[#1C1C1C]/30 disabled:opacity-50"
-            />
-          </div>
+          <input
+            id="code-ingest-url"
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder={t("codeIngest.urlPlaceholder")}
+            disabled={!!file || loading}
+            className="w-full bg-transparent border-0 border-b border-[#1C1C1C]/20 py-3 text-sm focus:outline-none focus:border-[#1C1C1C] transition-colors placeholder:text-[#1C1C1C]/30 disabled:opacity-50"
+          />
         </div>
 
         <div className="relative flex items-center py-2">
           <div className="flex-grow border-t border-[#1C1C1C]/10"></div>
-          <span className="flex-shrink-0 mx-4 text-[10px] uppercase tracking-widest text-[#1C1C1C]/40 font-mono">
+          <span className="flex-shrink-0 mx-4 text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 font-mono">
             {t("codeIngest.or")}
           </span>
           <div className="flex-grow border-t border-[#1C1C1C]/10"></div>
         </div>
 
-        {/* File upload */}
-        <div className="space-y-2">
-          <label className="block text-[10px] uppercase tracking-widest text-[#1C1C1C]/40 font-mono">
+        {/* File upload — 与 TypeSelectorModal option 卡片风格一致 */}
+        <div className="space-y-3">
+          <label className="block text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/40 font-mono">
             {t("codeIngest.fileLabel")}
           </label>
           <div
@@ -250,9 +244,9 @@ export function CodeIngestionUI({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             className={cn(
-              "cursor-pointer border border-dashed border-[#1C1C1C]/10 bg-[#F9F8F6] hover:bg-[#1C1C1C]/5 transition-colors p-8 text-center flex flex-col items-center justify-center gap-4 focus:outline-none focus:border-[#1C1C1C]/40",
-              file ? "border-[#1C1C1C]/40 bg-[#1C1C1C]/5" : "",
-              isDragOver && "border-[#1C1C1C] bg-[#1C1C1C]/10",
+              "group cursor-pointer border border-[#1C1C1C]/10 hover:bg-[#1C1C1C]/5 transition-colors p-8 md:p-10 flex flex-col justify-between min-h-[200px] focus:outline-none",
+              file ? "bg-[#1C1C1C]/5" : "",
+              isDragOver && "bg-[#1C1C1C]/10",
               loading && "opacity-50 cursor-not-allowed"
             )}
           >
@@ -281,17 +275,15 @@ export function CodeIngestionUI({
                 </button>
               </div>
             ) : (
-              <>
-                <Upload className="w-6 h-6 text-[#1C1C1C]/40" />
-                <div>
-                  <span className="font-sans text-sm text-[#1C1C1C]/60 block mb-1">
-                    {t("codeIngest.fileCta")}
-                  </span>
-                  <span className="font-mono text-[10px] text-[#1C1C1C]/40 uppercase">
-                    {t("codeIngest.fileHint")}
-                  </span>
-                </div>
-              </>
+              <div className="flex flex-col items-center justify-center gap-3 flex-1">
+                <Upload className="w-5 h-5 text-[#1C1C1C]/30 group-hover:text-[#1C1C1C]/60 transition-colors" />
+                <span className="font-serif text-base text-[#1C1C1C]/80 group-hover:italic transition-all">
+                  {t("codeIngest.fileCta")}
+                </span>
+                <span className="font-mono text-[10px] text-[#1C1C1C]/40 uppercase tracking-[0.2em]">
+                  {t("codeIngest.fileHint")}
+                </span>
+              </div>
             )}
           </div>
           {localFileError && (
@@ -307,7 +299,7 @@ export function CodeIngestionUI({
             role="alert"
             className="border border-[#1C1C1C] bg-[#1C1C1C]/5 p-4 font-sans text-xs text-[#1C1C1C] leading-relaxed"
           >
-            <span className="block text-[10px] uppercase tracking-widest text-[#1C1C1C]/60 font-mono mb-1">
+            <span className="block text-[10px] uppercase tracking-[0.2em] text-[#1C1C1C]/60 font-mono mb-1">
               {t("codeIngest.errorTitle")}
             </span>
             <span>{errorMessage}</span>
@@ -318,7 +310,7 @@ export function CodeIngestionUI({
         <button
           type="submit"
           disabled={(!url && !file) || loading}
-          className="w-full flex items-center justify-center gap-2 py-4 bg-[#1C1C1C] text-[#F9F8F6] text-xs uppercase tracking-widest hover:bg-[#1C1C1C]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+          className="w-full flex items-center justify-center gap-3 py-4 bg-[#1C1C1C] text-[#F9F8F6] text-xs uppercase tracking-[0.2em] hover:bg-[#1C1C1C]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
         >
           {t("codeIngest.submit")} <ArrowRight className="w-4 h-4" />
         </button>
@@ -335,8 +327,8 @@ export function CodeIngestionUI({
   const loadingView = (
     <div
       className={cn(
-        "w-full p-8 bg-white/50 backdrop-blur border border-[#1C1C1C]/10 animate-in fade-in zoom-in duration-500",
-        isModal ? "max-w-xl" : "max-w-2xl"
+        "w-full p-8 md:p-12 bg-[#F9F8F6] border border-[#1C1C1C]/10 animate-in fade-in zoom-in duration-500",
+        isModal ? "max-w-3xl" : "max-w-2xl"
       )}
     >
       <div className="mb-8 flex items-start justify-between gap-4">

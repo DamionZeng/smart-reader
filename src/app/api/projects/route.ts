@@ -6,6 +6,7 @@ import {
   tags,
   projectFolders,
   projectTags,
+  conceptGraphJobs,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
         originalUrl: documents.originalUrl,
         createdAt: documents.createdAt,
         isPublic: documents.isPublic,
+        status: documents.status,
       })
       .from(documents)
       .where(eq(documents.userId, session.user.id))
@@ -100,12 +102,49 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // === Parsing progress (Python backend) ===
+    // For projects in 'parsing' status, fetch the latest concept_graph_jobs
+    // row to surface real-time KG pipeline progress to the dashboard. We
+    // batch-query all parsing project ids in one shot and keep the newest
+    // job per projectId (jobs table may have multiple rows from retries).
+    const progressMap = new Map<
+      string,
+      { step: string; current: number; total: number; jobStatus?: string }
+    >();
+    const parsingIds = rows
+      .filter((r) => r.status === "parsing")
+      .map((r) => r.id);
+    if (parsingIds.length > 0) {
+      const jobRows = await db
+        .select({
+          projectId: conceptGraphJobs.projectId,
+          progress: conceptGraphJobs.progress,
+          jobStatus: conceptGraphJobs.status,
+          createdAt: conceptGraphJobs.createdAt,
+        })
+        .from(conceptGraphJobs)
+        .where(inArray(conceptGraphJobs.projectId, parsingIds))
+        .orderBy(desc(conceptGraphJobs.createdAt));
+      for (const j of jobRows) {
+        if (j.projectId && !progressMap.has(j.projectId)) {
+          const p = (j.progress ?? {}) as { step?: string; current?: number; total?: number };
+          progressMap.set(j.projectId, {
+            step: p.step ?? "queued",
+            current: p.current ?? 0,
+            total: p.total ?? 3,
+            jobStatus: j.jobStatus,
+          });
+        }
+      }
+    }
+
     const enriched = rows.map((r) => ({
       ...r,
       folder: folderMap.get(r.id) ?? null,
       tags: tagsMap.get(r.id) ?? [],
       // Only attach thumbnail for image-type projects; saves bytes on others
       thumbnail: r.type === "image" ? thumbMap.get(r.id) ?? null : null,
+      parseProgress: progressMap.get(r.id) ?? null,
     }));
 
     return NextResponse.json({ projects: enriched });

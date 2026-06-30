@@ -306,13 +306,10 @@ function BoardPageInner() {
   const projectId = searchParams.get("id");
   const graphId = searchParams.get("graphId");
 
-  // No id in the URL → this is the import screen, but the import UI
-  // now lives at `/import`. Redirect there so the URL bar accurately
-  // reflects what the user is looking at. The import page owns the
-  // full ingest state machine.
+  // No id in the URL → redirect to dashboard where the import modal lives.
   useEffect(() => {
     if (!projectId && !graphId) {
-      router.replace("/import");
+      router.replace("/dashboard");
     }
   }, [projectId, graphId, router]);
 

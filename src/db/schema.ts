@@ -88,9 +88,15 @@ export const documents = pgTable(
     edges: jsonb("edges").notNull(),
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
     isPublic: boolean("is_public").notNull().default(false),
     shareId: varchar("share_id", { length: 36 }),
+    // Project parse status: 'parsing' (KG pipeline running) | 'ready' | 'failed'.
+    // Default 'ready' so all existing rows are unaffected by the migration.
+    // Python parser service sets 'parsing' on document creation, flips to
+    // 'ready' when the KG pipeline completes (or 'failed' on error). The
+    // dashboard uses this to render a ParsingProjectCard with live progress.
+    status: varchar("status", { length: 20 }).notNull().default("ready"),
   },
   (table) => ({
     userIdIdx: index("idx_documents_user_id").on(table.userId),

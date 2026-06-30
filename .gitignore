@@ -13,3 +13,5 @@ coverage/
 .chrome-debug-profile/
 .chrome-profile/
 .test-shots/
+**/.venv/
+**/*.pyc

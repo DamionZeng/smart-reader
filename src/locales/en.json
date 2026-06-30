@@ -379,6 +379,9 @@
       "cta": "Create your first project"
     },
     "project": "Project {{index}}",
+    "parsing": "Parsing",
+    "parsingFailed": "Parsing failed",
+    "cancelParsing": "Cancel parsing",
     "deleteTitle": "Delete Project",
     "deleteConfirm": "Are you sure you want to delete \"{{title}}\"? This action cannot be undone. All nodes and edges will be permanently lost.",
     "deleteCancel": "Cancel",
